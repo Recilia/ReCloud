@@ -1,12 +1,45 @@
 #import "LTTheme.h"
 
+NSString *const LTThemeModeDidChangeNotification = @"LTThemeModeDidChangeNotification";
+
 @implementation LTTheme
 
 // UIUserInterfaceStyleDark. The enum is not in the SDKs this app compiles with,
 // so the value is spelled out and -userInterfaceStyle is called reflectively.
 static const NSInteger LTUserInterfaceStyleDark = 2;
 
+static NSString *const kLTAppearanceMode = @"LTAppearanceMode";
+
++ (NSInteger)appearanceMode {
+    NSNumber *saved = [[NSUserDefaults standardUserDefaults] objectForKey:kLTAppearanceMode];
+    if (!saved) return LTAppearanceModeSystem;
+    NSInteger mode = [saved integerValue];
+    if (mode < LTAppearanceModeSystem || mode > LTAppearanceModeDark) return LTAppearanceModeSystem;
+    return mode;
+}
+
++ (void)setAppearanceMode:(NSInteger)mode {
+    if (mode < LTAppearanceModeSystem) mode = LTAppearanceModeSystem;
+    if (mode > LTAppearanceModeDark) mode = LTAppearanceModeDark;
+    if (mode == [self appearanceMode]) return;
+    [[NSUserDefaults standardUserDefaults] setObject:@(mode) forKey:kLTAppearanceMode];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [[NSNotificationCenter defaultCenter] postNotificationName:LTThemeModeDidChangeNotification object:nil];
+}
+
++ (NSString *)labelForAppearanceMode:(NSInteger)mode {
+    switch (mode) {
+        case LTAppearanceModeLight: return @"Light";
+        case LTAppearanceModeDark:  return @"Dark";
+        default:                    return @"System";
+    }
+}
+
 + (BOOL)isDark {
+    NSInteger mode = [self appearanceMode];
+    if (mode == LTAppearanceModeDark) return YES;
+    if (mode == LTAppearanceModeLight) return NO;
+    // System: follow the OS on iOS 13+; light on older devices.
     UITraitCollection *traits = nil;
     UIWindow *window = [[UIApplication sharedApplication] keyWindow];
     if (!window) {

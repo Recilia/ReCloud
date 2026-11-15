@@ -398,6 +398,13 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         }
         return;
     }
+    if (alertView.tag == 955) {
+        if (buttonIndex >= 1) {
+            [LTTheme setAppearanceMode:buttonIndex - 1]; // System / Light / Dark
+            [self.tableView reloadData];
+        }
+        return;
+    }
     if (alertView.tag == 900 && buttonIndex == 1) {
         [self clearOfflineFiles];
     }
@@ -445,11 +452,33 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 }
 
 // The icon picker is appended after whatever the last appearance row happens to
-// be, so it never shifts the indices of the existing rows.
+// be, so it never shifts the indices of the existing rows. The dark mode row
+// likewise sits just before the icon picker.
 - (NSInteger)appearanceRowCount {
     NSInteger count = [LTOneHandedMode isSupported] ? 6 : 5;
     if ([LTAppIcon isPickerSupported]) count += 1;
+    count += 1; // Dark Mode
     return count;
+}
+
+- (NSInteger)darkModeRowIndex {
+    NSInteger row = [self appearanceRowCount] - 1;
+    if ([LTAppIcon isPickerSupported]) row -= 1;
+    return row;
+}
+
+- (NSString *)darkModeLabel {
+    return [LTTheme labelForAppearanceMode:[LTTheme appearanceMode]];
+}
+
+- (void)showDarkModePicker {
+    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Dark Mode"
+                                                   message:@"Choose the app appearance. System follows the OS on iOS 13+ and is light on older devices."
+                                                  delegate:self
+                                         cancelButtonTitle:@"Cancel"
+                                         otherButtonTitles:@"System", @"Light", @"Dark", nil];
+    alert.tag = 955;
+    [alert show];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -540,6 +569,11 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             } else if (indexPath.row == 4) {
                 cell.textLabel.text = @"Recents Tile Size";
                 cell.detailTextLabel.text = [self tileSizeLabel];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            } else if (indexPath.row == [self darkModeRowIndex]) {
+                cell.textLabel.text = @"Dark Mode";
+                cell.detailTextLabel.text = [self darkModeLabel];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else {
@@ -649,6 +683,8 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         } else if (indexPath.row == 4) {
             LTRecentsTileSizeViewController *vc = [[LTRecentsTileSizeViewController alloc] init];
             [self.navigationController pushViewController:vc animated:YES];
+        } else if (indexPath.row == [self darkModeRowIndex]) {
+            [self showDarkModePicker];
         } else if (indexPath.row == 5 && [LTOneHandedMode isSupported]) {
             LTOneHandedModeViewController *vc = [[LTOneHandedModeViewController alloc] init];
             [self.navigationController pushViewController:vc animated:YES];

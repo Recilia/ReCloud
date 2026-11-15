@@ -20,6 +20,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 @property (nonatomic, assign) BOOL isLoading;
 @property (nonatomic, assign) BOOL userPaused;
 @property (nonatomic, assign) BOOL resumeAfterInterruption;
+@property (nonatomic, assign) BOOL radioPending;
 @property (nonatomic, strong) MPMediaItemArtwork *nowPlayingArtwork;
 @property (nonatomic, copy) NSString *pendingVideoId;
 @property (nonatomic, strong) NSURLConnection *streamConnection;
@@ -63,6 +64,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     if (self) {
         _currentIndex = -1;
         _repeatMode = LTRepeatModeOff;
+        // Shuffle defaults to ON (user preference), stored so it survives
+        // restarts and stays in sync with the Shuffle toggle in the player.
+        id savedShuffle = [[NSUserDefaults standardUserDefaults] objectForKey:@"LTShuffleEnabled"];
+        _shuffleEnabled = savedShuffle ? [savedShuffle boolValue] : YES;
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(appWillEnterForeground:)
                                                      name:UIApplicationWillEnterForegroundNotification
@@ -291,10 +296,23 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     if (!tracks.count) return;
     [self commitStatsDelta];
     self.sourceQueue = [tracks copy];
-    self.queue = [tracks copy];
-    if (index < 0) index = 0;
-    if (index >= (NSInteger)tracks.count) index = 0;
-    self.currentIndex = index;
+    if (self.shuffleEnabled) {
+        // Shuffle is on: the tapped song plays first and everything else
+        // follows in random order (Spotify-style).
+        NSMutableArray *ordered = [tracks mutableCopy];
+        if (index < 0 || index >= (NSInteger)ordered.count) index = 0;
+        id chosen = [ordered objectAtIndex:(NSUInteger)index];
+        [ordered removeObjectAtIndex:(NSUInteger)index];
+        NSMutableArray *queue = [NSMutableArray arrayWithObject:chosen];
+        [queue addObjectsFromArray:[self shuffledArray:ordered]];
+        self.queue = queue;
+        self.currentIndex = 0;
+    } else {
+        self.queue = [tracks copy];
+        if (index < 0) index = 0;
+        if (index >= (NSInteger)tracks.count) index = 0;
+        self.currentIndex = index;
+    }
     [self postQueueChanged];
     [self loadCurrentTrack];
 }
@@ -305,6 +323,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     self.sourceQueue = [tracks copy];
     self.queue = [tracks copy];
     self.shuffleEnabled = shuffle;
+    [[NSUserDefaults standardUserDefaults] setObject:@(shuffle ? YES : NO) forKey:@"LTShuffleEnabled"];
     if (shuffle) {
         self.queue = [self shuffledArray:self.queue];
         self.currentIndex = 0;
@@ -601,11 +620,69 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         [self postQueueChanged];
         [self loadCurrentTrack];
     } else {
-        [self pausePlayback];
-        self.currentIndex = -1;
-        [self postQueueChanged];
-        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerDidFinishQueueNotification object:self];
+        // Queue exhausted. With shuffle enabled, extend the queue with a
+        // radio mix seeded from the last played track so playback keeps
+        // going instead of stopping dead.
+        if (self.shuffleEnabled && [self tryExtendQueueWithRadio]) return;
+        [self finishQueueAtEnd];
     }
+}
+
+- (void)finishQueueAtEnd {
+    [self pausePlayback];
+    self.currentIndex = -1;
+    [self postQueueChanged];
+    [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerDidFinishQueueNotification object:self];
+}
+
+// Appends a YT Music mix (RDAMVM<videoId>) seeded from the track that just
+// ended. Returns YES if the expansion was started (nextTrack should simply
+// wait for the async completion) or is already in flight.
+- (BOOL)tryExtendQueueWithRadio {
+    if (self.radioPending) return YES; // already fetching; wait for it
+    LTTrack *seed = [self currentTrack];
+    if (!seed.videoId.length) return NO;
+    NSString *radioId = [NSString stringWithFormat:@"RDAMVM%@", seed.videoId];
+    self.radioPending = YES;
+    NSInteger lastIndex = self.currentIndex;
+    NSUInteger lastCount = [self.queue count];
+    LTLog(@"RADIO extending queue with %@", radioId);
+    __weak LTPlayerController *weakSelf = self;
+    [[LTYouTubeClient sharedClient] fetchRadioTracksForPlaylistId:radioId completion:^(NSArray *tracks, NSError *error) {
+        __strong LTPlayerController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.radioPending = NO;
+        // Bail out if the user did anything else while we were fetching.
+        if (strongSelf.currentIndex != lastIndex || strongSelf.queue.count != lastCount) return;
+        if (error || tracks.count == 0) {
+            [strongSelf finishQueueAtEnd];
+            return;
+        }
+        NSMutableArray *queue = [strongSelf.queue mutableCopy];
+        NSMutableArray *source = [strongSelf.sourceQueue mutableCopy] ?: [NSMutableArray array];
+        NSMutableArray *added = [NSMutableArray array];
+        for (LTTrack *track in tracks) {
+            if (!track.videoId.length || [track.videoId isEqualToString:seed.videoId]) continue;
+            BOOL duplicate = NO;
+            for (LTTrack *existing in queue) {
+                if ([existing.videoId isEqualToString:track.videoId]) { duplicate = YES; break; }
+            }
+            if (duplicate) continue;
+            [queue addObject:track];
+            [source addObject:track];
+            [added addObject:track];
+        }
+        if (!added.count) {
+            [strongSelf finishQueueAtEnd];
+            return;
+        }
+        strongSelf.queue = queue;
+        strongSelf.sourceQueue = source;
+        [strongSelf postQueueChanged];
+        strongSelf.currentIndex = lastIndex + 1;
+        [strongSelf loadCurrentTrack];
+    }];
+    return YES;
 }
 
 - (void)previousTrack {
@@ -623,6 +700,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 
 - (void)toggleShuffle {
     self.shuffleEnabled = !self.shuffleEnabled;
+    [[NSUserDefaults standardUserDefaults] setObject:@(self.shuffleEnabled ? YES : NO) forKey:@"LTShuffleEnabled"];
     if (self.shuffleEnabled) {
         LTTrack *current = [self currentTrack];
         NSMutableArray *rest = [NSMutableArray array];
