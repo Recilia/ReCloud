@@ -1,0 +1,282 @@
+#import "LTAppDelegate.h"
+#import "LTSearchViewController.h"
+#import "LTLibraryViewController.h"
+#import "LTHomeViewController.h"
+#import "LTSettingsViewController.h"
+#import "LTPlayerViewController.h"
+#import "LTPlayerController.h"
+#import "LTTabBarController.h"
+#import "LTSplitContainerViewController.h"
+#import "LTGraphics.h"
+#import "LTDebugSettings.h"
+#import "LTiPodViewController.h"
+#import "LTOneHandedMode.h"
+#import "LTAppIcon.h"
+#import "LTLog.h"
+#import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
+
+@interface LTAppDelegate ()
+@property (nonatomic, assign) BOOL remoteCommandsEnabled;
+@end
+
+@implementation LTAppDelegate
+
+static void LTUncaughtExceptionHandler(NSException *e) {
+    NSString *path = [LTTempDirectory() stringByAppendingPathComponent:@"lt_crash.txt"];
+    NSString *text = [NSString stringWithFormat:@"REASON: %@\nNAME: %@\nCALLSTACK:\n%@\n",
+                      e.reason, e.name, [e callStackSymbols]];
+    [text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    LTLog(@"UNCAUGHT EXCEPTION %@ %@\n%@", e.name, e.reason, e.callStackSymbols);
+}
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    NSSetUncaughtExceptionHandler(&LTUncaughtExceptionHandler);
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setCategory:AVAudioSessionCategoryPlayback error:NULL];
+    [session setActive:YES error:NULL];
+    LTLog(@"APP didFinishLaunching");
+    [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
+    [self setupRemoteCommandCenter];
+    [self becomeFirstResponder];
+
+    self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+
+    if ([LTiPodViewController isEnabled]) {
+        self.window.rootViewController = [[LTiPodViewController alloc] init];
+    } else {
+        self.window.rootViewController = [LTAppDelegate standardRootViewController];
+    }
+    [self.window makeKeyAndVisible];
+    [LTAppDelegate applyDisplayModeAnimated:NO];
+    return YES;
+}
+
+// The standard tab-bar root, wrapped in the iPad split container when running
+// on iPad. Kept in sync with LTiPodViewController.makeStandardRoot.
++ (UIViewController *)standardRootViewController {
+    LTTabBarController *tabBar = [LTAppDelegate makeTabBarController];
+    if ([LTSplitContainerViewController isSupported]) {
+        return [[LTSplitContainerViewController alloc] initWithTabController:tabBar];
+    }
+    return tabBar;
+}
+
++ (LTTabBarController *)makeTabBarController {
+    NSMutableArray *controllers = [NSMutableArray array];
+
+    LTHomeViewController *home = [[LTHomeViewController alloc] init];
+    home.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Home" image:[LTGraphics homeIcon] tag:0];
+    UINavigationController *homeNav = [[UINavigationController alloc] initWithRootViewController:home];
+    [controllers addObject:homeNav];
+
+    LTSearchViewController *search = [[LTSearchViewController alloc] initWithType:@"songs"];
+    search.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Search" image:[LTGraphics searchIcon] tag:0];
+    UINavigationController *searchNav = [[UINavigationController alloc] initWithRootViewController:search];
+    [controllers addObject:searchNav];
+
+    LTLibraryViewController *library = [[LTLibraryViewController alloc] init];
+    library.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Library" image:[LTGraphics libraryIcon] tag:0];
+    UINavigationController *libraryNav = [[UINavigationController alloc] initWithRootViewController:library];
+    [controllers addObject:libraryNav];
+
+    LTSettingsViewController *settings = [[LTSettingsViewController alloc] init];
+    settings.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Settings" image:[LTGraphics settingsIcon] tag:0];
+    UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settings];
+    [controllers addObject:settingsNav];
+
+    LTPlayerViewController *nowPlaying = [[LTPlayerViewController alloc] init];
+    nowPlaying.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Now Playing"
+                                                          image:[LTGraphics playIcon]
+                                                            tag:0];
+    UINavigationController *nowPlayingNav = [[UINavigationController alloc] initWithRootViewController:nowPlaying];
+    [controllers addObject:nowPlayingNav];
+
+    LTTabBarController *tabBar = [[LTTabBarController alloc] init];
+    tabBar.viewControllers = controllers;
+    return tabBar;
+}
+
++ (void)applyDisplayModeAnimated:(BOOL)animated {
+    UIWindow *window = [(LTAppDelegate *)[[UIApplication sharedApplication] delegate] window];
+    if (!window) return;
+    UIView *root = window.rootViewController.view;
+    if (!root) return;
+
+    if (animated) {
+        [UIView animateWithDuration:0.35f animations:^{
+            [LTAppDelegate applyDisplayModeOnce:window root:root];
+        }];
+    } else {
+        [LTAppDelegate applyDisplayModeOnce:window root:root];
+    }
+}
+
++ (void)applyDisplayModeOnce:(UIWindow *)window root:(UIView *)root {
+    CGRect screen = window.bounds;
+    // One-handed mode takes priority: it draws the classic 320x480 layout, but
+    // pinned to a bottom corner instead of centered.
+    BOOL oneHanded = [LTOneHandedMode isActive];
+    BOOL forceNonWide = [LTDebugSettings forceNonWidescreen];
+    BOOL forceWide = [LTDebugSettings forceWidescreen];
+
+    CGFloat virtualW = screen.size.width;
+    CGFloat virtualH = screen.size.height;
+    if (oneHanded) {
+        CGSize handSize = [LTOneHandedMode virtualSize];
+        virtualW = handSize.width;
+        virtualH = handSize.height;
+    } else if (forceNonWide) {
+        virtualW = 320.0f;
+        virtualH = 480.0f;
+    } else if (forceWide) {
+        virtualW = 320.0f;
+        virtualH = 568.0f;
+    }
+
+    BOOL forced = (virtualW != screen.size.width || virtualH != screen.size.height);
+
+    root.transform = CGAffineTransformMake(1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+    if (forced) {
+        if (oneHanded) {
+            root.frame = [LTOneHandedMode frameInBounds:screen];
+        } else {
+            root.frame = CGRectMake(round((screen.size.width - virtualW) / 2.0f),
+                                    round((screen.size.height - virtualH) / 2.0f),
+                                    virtualW, virtualH);
+        }
+        CGFloat scale = MIN(screen.size.width / virtualW, screen.size.height / virtualH);
+        if (scale < 1.0f) {
+            root.transform = CGAffineTransformMakeScale(scale, scale);
+        }
+        window.backgroundColor = [UIColor blackColor];
+        root.autoresizingMask = UIViewAutoresizingNone;
+    } else {
+        root.frame = window.bounds;
+        window.backgroundColor = nil;
+        root.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    }
+}
+
+- (void)applicationWillResignActive:(UIApplication *)application {
+    LTLog(@"APP willResignActive");
+    [[AVAudioSession sharedInstance] setActive:YES error:NULL];
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)application {
+    LTLog(@"APP didEnterBackground");
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setActive:YES error:NULL];
+}
+
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    LTLog(@"APP didBecomeActive");
+    // Here rather than in didFinishLaunching: setAlternateIconName: is unreliable
+    // before the app is frontmost. The defaults flag keeps it to one attempt.
+    [LTAppIcon applyModernIconIfNeeded];
+    [self becomeFirstResponder];
+}
+
+- (BOOL)canBecomeFirstResponder {
+    return YES;
+}
+
+- (void)setupRemoteCommandCenter {
+    if (![MPRemoteCommandCenter class]) return;
+    MPRemoteCommandCenter *center = [MPRemoteCommandCenter sharedCommandCenter];
+    self.remoteCommandsEnabled = YES;
+
+    [center.playCommand addTarget:self action:@selector(remotePlayCommand:)];
+    [center.pauseCommand addTarget:self action:@selector(remotePauseCommand:)];
+    [center.togglePlayPauseCommand addTarget:self action:@selector(remoteTogglePlayPauseCommand:)];
+    [center.nextTrackCommand addTarget:self action:@selector(remoteNextCommand:)];
+    [center.previousTrackCommand addTarget:self action:@selector(remotePreviousCommand:)];
+
+    // Only expose the 15s fwd/bwd buttons alongside the scrubber (iOS 9.1+).
+    // On earlier versions (7.1-9.0) they replace the track skip/back buttons
+    // on the lock screen, which is undesired.
+    if ([center respondsToSelector:@selector(changePlaybackPositionCommand)]) {
+        center.skipForwardCommand.preferredIntervals = @[ @(15) ];
+        [center.skipForwardCommand addTarget:self action:@selector(remoteSkipForwardCommand:)];
+        center.skipBackwardCommand.preferredIntervals = @[ @(15) ];
+        [center.skipBackwardCommand addTarget:self action:@selector(remoteSkipBackwardCommand:)];
+        [center.changePlaybackPositionCommand addTarget:self action:@selector(remoteChangePlaybackPositionCommand:)];
+    }
+}
+
+- (MPRemoteCommandHandlerStatus)remotePlayCommand:(MPRemoteCommandEvent *)event {
+    [[LTPlayerController sharedController] playMovie];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remotePauseCommand:(MPRemoteCommandEvent *)event {
+    [[LTPlayerController sharedController] pausePlayback];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remoteTogglePlayPauseCommand:(MPRemoteCommandEvent *)event {
+    [[LTPlayerController sharedController] togglePlayPause];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remoteNextCommand:(MPRemoteCommandEvent *)event {
+    [[LTPlayerController sharedController] nextTrack];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remotePreviousCommand:(MPRemoteCommandEvent *)event {
+    [[LTPlayerController sharedController] previousTrack];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remoteSkipForwardCommand:(MPSkipIntervalCommandEvent *)event {
+    LTPlayerController *controller = [LTPlayerController sharedController];
+    double interval = event.interval > 0 ? event.interval : 15.0;
+    [controller seekToTime:[controller currentTime] + interval];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remoteSkipBackwardCommand:(MPSkipIntervalCommandEvent *)event {
+    LTPlayerController *controller = [LTPlayerController sharedController];
+    double interval = event.interval > 0 ? event.interval : 15.0;
+    NSTimeInterval target = [controller currentTime] - interval;
+    [controller seekToTime:target < 0 ? 0.0 : target];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)remoteChangePlaybackPositionCommand:(MPChangePlaybackPositionCommandEvent *)event {
+    [[LTPlayerController sharedController] seekToTime:event.positionTime];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (void)remoteControlReceivedWithEvent:(UIEvent *)event {
+    if (self.remoteCommandsEnabled) return;
+    LTPlayerController *controller = [LTPlayerController sharedController];
+    switch (event.subtype) {
+        case UIEventSubtypeRemoteControlPlay:
+        case UIEventSubtypeRemoteControlStop:
+            [controller playMovie];
+            break;
+        case UIEventSubtypeRemoteControlPause:
+            [controller pausePlayback];
+            break;
+        case UIEventSubtypeRemoteControlTogglePlayPause:
+            [controller togglePlayPause];
+            break;
+        case UIEventSubtypeRemoteControlNextTrack:
+            [controller nextTrack];
+            break;
+        case UIEventSubtypeRemoteControlPreviousTrack:
+            [controller previousTrack];
+            break;
+        case UIEventSubtypeRemoteControlBeginSeekingForward:
+        case UIEventSubtypeRemoteControlEndSeekingForward:
+        case UIEventSubtypeRemoteControlBeginSeekingBackward:
+        case UIEventSubtypeRemoteControlEndSeekingBackward:
+            break;
+        default:
+            break;
+    }
+}
+
+@end
