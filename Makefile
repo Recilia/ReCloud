@@ -66,6 +66,6 @@ ReinMusic_FILES = main.m \
 	LTiPodViewController.m
 ReinMusic_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore MediaPlayer
 ReinMusic_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-objc-interface-ivars
-ReinMusic_LDFLAGS = -Wl,-U,_memcpy -Wl,-U,__Unwind_Resume
+ReinMusic_LDFLAGS = -Wl,-U,_memcpy -Wl,-U,_memset -Wl,-U,__Unwind_Resume
 
 include $(THEOS_MAKE_PATH)/application.mk

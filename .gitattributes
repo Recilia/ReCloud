@@ -1,0 +1,2 @@
+# Theos requires Unix line endings in package metadata.
+control eol=lf
