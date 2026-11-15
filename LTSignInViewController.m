@@ -16,6 +16,8 @@
 @property (nonatomic, strong) UIActivityIndicatorView *spinner;
 @property (nonatomic, strong) UILabel *hintLabel;
 @property (nonatomic, strong) UIAlertView *pasteAlert;
+@property (nonatomic, strong) UIButton *webButton;
+@property (nonatomic, strong) UIButton *pasteButton;
 @end
 
 @implementation LTSignInViewController
@@ -44,22 +46,68 @@
     self.navigationItem.rightBarButtonItem = doneItem;
 
     CGFloat width = self.view.bounds.size.width;
-    CGFloat top = 0.0f;
 
-    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, top + 8, width - 24, 34)];
+    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, width - 24, 34)];
     self.hintLabel.font = [UIFont systemFontOfSize:12];
     self.hintLabel.textColor = [LTTheme secondaryText];
     self.hintLabel.numberOfLines = 2;
     self.hintLabel.textAlignment = NSTextAlignmentCenter;
     self.hintLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
     [self.view addSubview:self.hintLabel];
-    top += CGRectGetMaxY(self.hintLabel.frame) + 4;
 
     if (self.pasteOnly) {
         self.hintLabel.text = @"Paste the SAPISID value (or the full Cookie header)\nfrom a browser signed into YouTube Music.";
         [self pasteTapped:nil];
         return;
     }
+
+    // Google's login page is very heavy modern JavaScript, and on legacy
+    // armv7 devices the old WebKit engine crashes while rendering it (an
+    // uncatchable native crash inside WebKit). So the page is never loaded
+    // automatically: the screen opens with buttons and only loads the page
+    // when the user explicitly asks for it. The paste-cookie flow is the
+    // guaranteed fallback.
+    self.hintLabel.text = @"Google's sign-in page is heavy and can crash old\nWebKit. If it does, use Paste cookie instead.";
+    self.hintLabel.numberOfLines = 3;
+    self.hintLabel.frame = CGRectMake(12, 8, width - 24, 48);
+
+    CGFloat buttonY = CGRectGetMaxY(self.hintLabel.frame) + 8;
+    self.webButton = [self actionButtonWithTitle:@"Open Google sign-in page" y:buttonY];
+    [self.webButton addTarget:self
+                       action:@selector(openWebSignInTapped:)
+             forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.webButton];
+
+    self.pasteButton = [self actionButtonWithTitle:@"Paste SAPISID cookie instead"
+                                                 y:buttonY + CGRectGetHeight(self.webButton.frame) + 10];
+    [self.pasteButton addTarget:self
+                         action:@selector(pasteTapped:)
+               forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.pasteButton];
+}
+
+- (UIButton *)actionButtonWithTitle:(NSString *)title y:(CGFloat)y {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.frame = CGRectMake(16, y, self.view.bounds.size.width - 32, 44);
+    button.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
+    button.layer.cornerRadius = 8;
+    button.layer.borderWidth = 1;
+    button.layer.borderColor = [LTTheme separator].CGColor;
+    button.backgroundColor = [LTTheme fill];
+    [button setTitle:title forState:UIControlStateNormal];
+    [button setTitleColor:[LTTheme text] forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:15];
+    return button;
+}
+
+- (void)openWebSignInTapped:(id)sender {
+    [self.webButton removeFromSuperview];
+    self.webButton = nil;
+    [self.pasteButton removeFromSuperview];
+    self.pasteButton = nil;
+
+    CGFloat width = self.view.bounds.size.width;
+    CGFloat top = CGRectGetMaxY(self.hintLabel.frame) + 4;
 
     self.webView = [[UIWebView alloc] initWithFrame:CGRectMake(0, top, width, self.view.bounds.size.height - top)];
     self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -74,9 +122,14 @@
     [self.spinner startAnimating];
 
     NSURL *url = [NSURL URLWithString:@"https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F&hl=en"];
-    NSURLRequest *request = [NSURLRequest requestWithURL:url
-                                             cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
-                                         timeoutInterval:60.0];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url
+                                                           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                                       timeoutInterval:60.0];
+    // Pretend to be a very old Android browser so Google serves its
+    // simplified lightweight login page instead of the modern one that
+    // crashes the legacy WebKit engine mid-render.
+    [request setValue:@"Mozilla/5.0 (Linux; U; Android 2.3.7; en-us) AppleWebKit/533.1 (KHTML, like Gecko) Version/4.0 Mobile Safari/533.1"
+       forHTTPHeaderField:@"User-Agent"];
     [self.webView loadRequest:request];
 }
 

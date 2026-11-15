@@ -471,7 +471,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
         case LTSettingsSectionData: return 8;
         case LTSettingsSectionAbout: return 2;
-        case LTSettingsSectionCredits: return 2;
+        case LTSettingsSectionCredits: return 4;
         default: return 0;
     }
 }
@@ -600,8 +600,16 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             break;
         }
         case LTSettingsSectionCredits: {
-            NSArray *names = @[ @"SuperYosh23", @"OpenCode" ];
-            NSArray *roles = @[ @"App concept and design", @"AI Coding Agent" ];
+            static NSArray *names = nil;
+            static NSArray *roles = nil;
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{
+                names = @[ @"Rein",
+                           @"Discord: @ncros",
+                           @"Github: @Recilia",
+                           @"Email: ncros@duck.com" ];
+                roles = @[ @"Developer", @"", @"", @"" ];
+            });
             cell.textLabel.text = [names objectAtIndex:(NSUInteger)indexPath.row];
             cell.detailTextLabel.text = [roles objectAtIndex:(NSUInteger)indexPath.row];
             cell.accessoryView = nil;

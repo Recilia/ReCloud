@@ -37,7 +37,7 @@ import make_legacy_ipa  # noqa: E402
 import make_modern_ipa  # noqa: E402
 import make_rootless_deb  # noqa: E402
 
-THEOS = Path("/home/superyosh23/theos")
+THEOS = Path(os.environ.get("THEOS", "/opt/theos"))
 PACKAGE = "com.legacymusic.app"
 
 

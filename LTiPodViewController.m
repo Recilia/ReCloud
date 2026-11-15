@@ -630,7 +630,7 @@ typedef NS_ENUM(NSInteger, LTiPodWheelButton) {
                        detail,
                        @"iPod mode emulator",
                        @"For legacy iOS devices",
-                       @"based on audioNINJA Legacy by SuperYosh23"];
+                       @"based on audioNINJA Legacy"];
     for (NSString *line in lines) {
         [items addObject:[[LTiPodItem alloc] initWithTitle:line subtitle:nil action:LTiPodActionNone]];
     }
