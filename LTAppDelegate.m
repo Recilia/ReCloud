@@ -13,7 +13,6 @@
 #import "LTOneHandedMode.h"
 #import "LTAppIcon.h"
 #import "LTLog.h"
-#import "LTTheme.h"
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
 
@@ -40,10 +39,6 @@ static void LTUncaughtExceptionHandler(NSException *e) {
     [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
     [self setupRemoteCommandCenter];
     [self becomeFirstResponder];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(themeModeDidChange:)
-                                                 name:LTThemeModeDidChangeNotification
-                                               object:nil];
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
@@ -64,37 +59,6 @@ static void LTUncaughtExceptionHandler(NSException *e) {
         return [[LTSplitContainerViewController alloc] initWithTabController:tabBar];
     }
     return tabBar;
-}
-
-// Rebuild the whole root hierarchy so every view re-runs viewDidLoad with the
-// new palette. This is the only reliable way to re-theme the app on old SDKs,
-// where views bake their colors in at creation time. The selected tab is kept.
-- (void)themeModeDidChange:(NSNotification *)notification {
-    LTLog(@"THEME mode changed, rebuilding root");
-    UIViewController *root = self.window.rootViewController;
-    LTTabBarController *oldTab = nil;
-    if ([root isKindOfClass:[LTTabBarController class]]) {
-        oldTab = (LTTabBarController *)root;
-    } else if ([root isKindOfClass:[LTSplitContainerViewController class]]) {
-        oldTab = ((LTSplitContainerViewController *)root).tabController;
-    }
-    NSInteger previousIndex = oldTab ? (NSInteger)oldTab.selectedIndex : 0;
-    if ([root isKindOfClass:[LTiPodViewController class]]) {
-        // iPod mode owns its own rendering; let it pick up the change itself.
-        return;
-    }
-    UIViewController *newRoot = [LTAppDelegate standardRootViewController];
-    self.window.rootViewController = newRoot;
-    LTTabBarController *newTab = nil;
-    if ([newRoot isKindOfClass:[LTTabBarController class]]) {
-        newTab = (LTTabBarController *)newRoot;
-    } else if ([newRoot isKindOfClass:[LTSplitContainerViewController class]]) {
-        newTab = ((LTSplitContainerViewController *)newRoot).tabController;
-    }
-    if (newTab && previousIndex >= 0 && previousIndex < (NSInteger)newTab.viewControllers.count) {
-        newTab.selectedIndex = previousIndex;
-    }
-    [LTAppDelegate applyDisplayModeAnimated:NO];
 }
 
 + (LTTabBarController *)makeTabBarController {

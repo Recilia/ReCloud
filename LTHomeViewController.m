@@ -280,6 +280,9 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 @property (nonatomic, strong) UILabel *bannerSubtitleLabel;
 // Signed-in account content.
 @property (nonatomic, strong) NSArray *homeShelves;    // @{"title",@"items"}
+@property (nonatomic, strong) NSArray *radioSeeds;     // LTTrack seeds the home shelves were built from
+@property (nonatomic, assign) BOOL radioLoading;
+@property (nonatomic, assign) BOOL serverHomeLoading;
 @property (nonatomic, strong) NSArray *libraryItems;   // LTBrowseItem
 @property (nonatomic, strong) NSArray *historyTracks;  // LTTrack
 @property (nonatomic, strong) NSArray *sections;       // section layout
@@ -412,6 +415,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 
 - (void)authDidChange:(NSNotification *)notification {
     self.homeShelves = nil;
+    self.radioSeeds = nil;
     self.libraryItems = nil;
     self.historyTracks = nil;
     self.accountLoaded = NO;
@@ -422,6 +426,11 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 - (void)loadAccountContentIfNeeded {
+    // The home shelves are built locally from the listening history (radio
+    // mixes seeded by recently played tracks), so they follow what the user
+    // actually listened to instead of YouTube's geo-personalized home, which
+    // is dominated by content from the user's country.
+    [self loadRecentsRadioShelvesIfNeeded];
     if (![[LTAuth sharedAuth] signedIn]) return;
     if (self.accountLoaded || self.accountLoading) return;
     self.accountLoading = YES;
@@ -429,9 +438,9 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 
     LTYouTubeClient *client = [LTYouTubeClient sharedClient];
     __weak LTHomeViewController *weakSelf = self;
-    // All three requests complete on the main queue, so a plain counter
+    // Both requests complete on the main queue, so a plain counter
     // is enough to detect when the batch is done.
-    __block NSInteger remaining = 3;
+    __block NSInteger remaining = 2;
 
     void (^oneFinished)(void) = ^{
         remaining -= 1;
@@ -444,11 +453,6 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
         [strongSelf reloadData];
     };
 
-    [client fetchHomeRecommendationsWithCompletion:^(NSArray *shelves, NSError *error) {
-        if (error) LTLog(@"HOME home shelves error %@", error);
-        if (weakSelf) weakSelf.homeShelves = shelves;
-        oneFinished();
-    }];
     [client fetchLibraryPlaylistsWithCompletion:^(NSArray *items, NSError *error) {
         if (error) LTLog(@"HOME library error %@", error);
         if (weakSelf) weakSelf.libraryItems = items;
@@ -461,12 +465,91 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
     }];
 }
 
+// Builds one "Because you played …" shelf per recently played track (up to
+// six seeds) using YouTube Music mixes (RDAMVM<videoId>). These mixes are
+// seeded by listening, so a K-drama OST leads to more K-OST / K-pop next —
+// regardless of the device's country. Needs no sign-in.
+- (void)loadRecentsRadioShelvesIfNeeded {
+    self.recentTracks = [[LTPlaylistStore sharedStore] recentTracks];
+    if (!self.recentTracks.count) {
+        // No listening history yet: fall back to YouTube's server home
+        // shelves for signed-in users so the page is never empty.
+        if ([[LTAuth sharedAuth] signedIn] && !self.homeShelves.count && !self.serverHomeLoading) {
+            self.serverHomeLoading = YES;
+            LTYouTubeClient *client = [LTYouTubeClient sharedClient];
+            __weak LTHomeViewController *weakSelf = self;
+            [client fetchHomeRecommendationsWithCompletion:^(NSArray *shelves, NSError *error) {
+                if (error) LTLog(@"HOME home shelves error %@", error);
+                LTHomeViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.serverHomeLoading = NO;
+                if (shelves.count) strongSelf.homeShelves = shelves;
+                [strongSelf reloadData];
+            }];
+        }
+        return;
+    }
+
+    // Distinct seeds, most recent first.
+    NSMutableArray *seeds = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (LTTrack *track in self.recentTracks) {
+        if (!track.videoId.length || [seen containsObject:track.videoId]) continue;
+        [seen addObject:track.videoId];
+        [seeds addObject:track];
+        if (seeds.count >= 6) break;
+    }
+    if ([self.radioSeeds isEqualToArray:seeds]) return; // nothing new
+    self.radioSeeds = [seeds copy];
+    self.radioLoading = YES;
+    self.homeShelves = @[];
+
+    LTYouTubeClient *client = [LTYouTubeClient sharedClient];
+    __weak LTHomeViewController *weakSelf = self;
+    // index -> shelf, so shelves appear in recency order however the
+    // parallel requests happen to finish.
+    __block NSMutableDictionary *shelfByIndex = [NSMutableDictionary dictionary];
+    __block NSInteger remaining = (NSInteger)seeds.count;
+
+    [seeds enumerateObjectsUsingBlock:^(LTTrack *seed, NSUInteger idx, BOOL *stop) {
+        [client fetchRadioTracksForPlaylistId:[NSString stringWithFormat:@"RDAMVM%@", seed.videoId]
+                                   completion:^(NSArray *tracks, NSError *error) {
+            LTHomeViewController *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            if (!error && tracks.count) {
+                NSMutableArray *items = [NSMutableArray array];
+                NSMutableSet *ids = [NSMutableSet setWithObject:seed.videoId];
+                for (LTTrack *track in tracks) {
+                    if (!track.videoId.length || [ids containsObject:track.videoId]) continue;
+                    [ids addObject:track.videoId];
+                    [items addObject:track];
+                    if (items.count >= 12) break;
+                }
+                if (items.count >= 2) {
+                    NSString *title = [NSString stringWithFormat:@"Because you played %@", seed.title];
+                    NSDictionary *shelf = @{ @"title": title, @"items": items };
+                    [shelfByIndex setObject:shelf forKey:@(idx)];
+                }
+            }
+            NSMutableArray *ordered = [NSMutableArray array];
+            for (NSUInteger i = 0; i < seeds.count; i++) {
+                id shelf = [shelfByIndex objectForKey:@(i)];
+                if (shelf) [ordered addObject:shelf];
+            }
+            strongSelf.homeShelves = ordered;
+            remaining -= 1;
+            if (remaining <= 0) strongSelf.radioLoading = NO;
+            [strongSelf reloadData];
+        }];
+    }];
+}
+
 #pragma mark - Sections
 
 - (void)rebuildSections {
     NSMutableArray *layout = [NSMutableArray array];
     BOOL signedIn = [[LTAuth sharedAuth] signedIn];
-    if (signedIn && self.homeShelves.count) {
+    if (self.homeShelves.count) {
         for (NSUInteger i = 0; i < self.homeShelves.count; i++) {
             [layout addObject:@{ @"kind": @"shelf", @"index": @(i) }];
         }
@@ -506,6 +589,10 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 - (void)storeDidChange:(NSNotification *)notification {
+    // Recents may have changed (new song played) — rebuild the radio shelves
+    // when the seed set differs; loadRecentsRadioShelvesIfNeeded no-ops
+    // otherwise.
+    [self loadRecentsRadioShelvesIfNeeded];
     [self reloadData];
 }
 
