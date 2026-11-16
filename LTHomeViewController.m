@@ -12,262 +12,8 @@
 #import "LTTheme.h"
 #import "LTLog.h"
 #import <QuartzCore/QuartzCore.h>
-
-#pragma mark - Recently played horizontal strip
-
-@interface LTHomeRecentsCell : UITableViewCell
-@property (nonatomic, copy) void (^onTrackTapped)(LTTrack *track);
-- (void)setTracks:(NSArray *)tracks;
-@end
-
-@implementation LTHomeRecentsCell {
-    UIScrollView *_scrollView;
-    NSArray *_tracks;
-}
-
-const CGFloat kHomeTileMinWidth = 90.0f;
-const CGFloat kHomeTileMaxWidth = 130.0f;
-const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
-
-+ (CGFloat)tileWidth {
-    CGFloat width = [[NSUserDefaults standardUserDefaults] floatForKey:@"LTHomeTileSize"];
-    if (width < kHomeTileMinWidth || width > kHomeTileMaxWidth) {
-        width = kHomeTileMinWidth;
-        [[NSUserDefaults standardUserDefaults] setFloat:width forKey:@"LTHomeTileSize"];
-    }
-    return width;
-}
-
-+ (CGFloat)artworkHeight {
-    return [LTHomeRecentsCell tileWidth] * kHomeTileArtRatio;
-}
-
-+ (CGFloat)contentHeight {
-    return [LTHomeRecentsCell artworkHeight] + 54.0f;
-}
-
-- (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
-    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
-    if (self) {
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
-        _scrollView.showsHorizontalScrollIndicator = NO;
-        _scrollView.showsVerticalScrollIndicator = NO;
-        _scrollView.directionalLockEnabled = YES;
-        _scrollView.bounces = NO;
-        if ([_scrollView respondsToSelector:@selector(setAlwaysBounceVertical:)]) {
-            _scrollView.alwaysBounceVertical = NO;
-        }
-        _scrollView.backgroundColor = [LTTheme background];
-        _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [self.contentView addSubview:_scrollView];
-    }
-    return self;
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    _scrollView.frame = CGRectMake(0, 0, self.contentView.bounds.size.width, self.contentView.bounds.size.height);
-}
-
-- (void)setTracks:(NSArray *)tracks {
-    _tracks = tracks;
-    _scrollView.backgroundColor = [LTTheme background];
-    self.backgroundColor = [LTTheme background];
-    self.contentView.backgroundColor = [LTTheme background];
-    for (UIView *view in _scrollView.subviews) {
-        [view removeFromSuperview];
-    }
-    CGFloat tileWidth = [LTHomeRecentsCell tileWidth];
-    CGFloat artH = [LTHomeRecentsCell artworkHeight];
-    CGFloat gap = 10.0f;
-    CGFloat x = 10.0f;
-    NSUInteger index = 0;
-    for (LTTrack *track in tracks) {
-        UIView *tile = [[UIView alloc] initWithFrame:CGRectMake(x, 6, tileWidth, artH + 42)];
-
-        UIButton *imageButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        imageButton.frame = CGRectMake(0, 0, tileWidth, artH);
-        imageButton.backgroundColor = [LTTheme placeholder];
-        imageButton.layer.cornerRadius = 8.0f;
-        imageButton.clipsToBounds = YES;
-        imageButton.tag = (NSInteger)index;
-        [imageButton addTarget:self action:@selector(tileTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [tile addSubview:imageButton];
-
-        UIImageView *artwork = [[UIImageView alloc] initWithFrame:imageButton.bounds];
-        artwork.contentMode = UIViewContentModeScaleAspectFill;
-        artwork.clipsToBounds = YES;
-        [imageButton addSubview:artwork];
-        if (track.thumbnailURL.length) {
-            NSString *artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:track.thumbnailURL];
-            __weak UIImageView *weakArtwork = artwork;
-            [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
-                if (image) weakArtwork.image = image;
-            }];
-        }
-
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(2, artH + 4, tileWidth - 4, 26)];
-        titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        titleLabel.numberOfLines = 2;
-        titleLabel.textColor = [LTTheme text];
-        titleLabel.text = track.title;
-        [tile addSubview:titleLabel];
-
-        UILabel *artistLabel = [[UILabel alloc] initWithFrame:CGRectMake(2, artH + 30, tileWidth - 4, 12)];
-        artistLabel.font = [UIFont systemFontOfSize:11];
-        artistLabel.textColor = [LTTheme secondaryText];
-        artistLabel.text = track.artist.length ? track.artist : @"Unknown Artist";
-        [tile addSubview:artistLabel];
-
-        [_scrollView addSubview:tile];
-        x += tileWidth + gap;
-        index += 1;
-    }
-    CGFloat contentWidth = MAX(x, self.contentView.bounds.size.width + 1);
-    _scrollView.contentSize = CGSizeMake(contentWidth, [LTHomeRecentsCell contentHeight]);
-}
-
-- (void)tileTapped:(UIButton *)button {
-    NSUInteger index = (NSUInteger)button.tag;
-    if (index >= _tracks.count) return;
-    if (self.onTrackTapped) self.onTrackTapped([_tracks objectAtIndex:index]);
-}
-
-@end
-
-#pragma mark - Home shelf strip cell
-
-// Horizontal strip that can hold a mix of LTTrack and LTBrowseItem tiles.
-@interface LTHomeShelfCell : UITableViewCell
-@property (nonatomic, copy) void (^onTrackTapped)(LTTrack *track);
-@property (nonatomic, copy) void (^onBrowseTapped)(LTBrowseItem *item);
-- (void)setItems:(NSArray *)items;
-@end
-
-@implementation LTHomeShelfCell {
-    UIScrollView *_scrollView;
-    NSArray *_items;
-}
-
-- (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
-    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
-    if (self) {
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
-        _scrollView.showsHorizontalScrollIndicator = NO;
-        _scrollView.showsVerticalScrollIndicator = NO;
-        _scrollView.directionalLockEnabled = YES;
-        _scrollView.bounces = NO;
-        if ([_scrollView respondsToSelector:@selector(setAlwaysBounceVertical:)]) {
-            _scrollView.alwaysBounceVertical = NO;
-        }
-        _scrollView.backgroundColor = [LTTheme background];
-        _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [self.contentView addSubview:_scrollView];
-    }
-    return self;
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    _scrollView.frame = CGRectMake(0, 0, self.contentView.bounds.size.width, self.contentView.bounds.size.height);
-}
-
-- (void)setItems:(NSArray *)items {
-    _items = items;
-    _scrollView.backgroundColor = [LTTheme background];
-    self.backgroundColor = [LTTheme background];
-    self.contentView.backgroundColor = [LTTheme background];
-    for (UIView *view in _scrollView.subviews) {
-        [view removeFromSuperview];
-    }
-    CGFloat tileWidth = [LTHomeRecentsCell tileWidth];
-    CGFloat artH = [LTHomeRecentsCell artworkHeight];
-    CGFloat gap = 10.0f;
-    CGFloat x = 10.0f;
-    NSUInteger index = 0;
-    for (id obj in items) {
-        UIView *tile = [[UIView alloc] initWithFrame:CGRectMake(x, 6, tileWidth, artH + 42)];
-
-        UIButton *imageButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        imageButton.frame = CGRectMake(0, 0, tileWidth, artH);
-        imageButton.backgroundColor = [LTTheme placeholder];
-        imageButton.layer.cornerRadius = 8.0f;
-        imageButton.clipsToBounds = YES;
-        imageButton.tag = (NSInteger)index;
-        [imageButton addTarget:self action:@selector(tileTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [tile addSubview:imageButton];
-
-        UIImageView *artwork = [[UIImageView alloc] initWithFrame:imageButton.bounds];
-        artwork.contentMode = UIViewContentModeScaleAspectFill;
-        artwork.clipsToBounds = YES;
-        [imageButton addSubview:artwork];
-
-        NSString *title = nil, *subtitle = nil, *thumbURL = nil;
-        BOOL square = NO;
-        if ([obj isKindOfClass:[LTTrack class]]) {
-            LTTrack *track = obj;
-            title = track.title;
-            subtitle = track.artist.length ? track.artist : @"Unknown Artist";
-            thumbURL = track.thumbnailURL;
-        } else if ([obj isKindOfClass:[LTBrowseItem class]]) {
-            LTBrowseItem *bi = obj;
-            title = bi.title;
-            subtitle = bi.subtitle.length ? bi.subtitle : [self kindLabel:bi.kind];
-            thumbURL = bi.thumbnailURL;
-            square = (bi.kind == LTBrowseKindArtist);
-        }
-
-        if (thumbURL.length) {
-            NSString *artURL = thumbURL;
-            if (!square) artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:thumbURL];
-            else artURL = [[LTYouTubeClient sharedClient] channelAvatarURL:thumbURL size:160];
-            __weak UIImageView *weakArtwork = artwork;
-            [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
-                if (image) weakArtwork.image = image;
-            }];
-        }
-
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(2, artH + 4, tileWidth - 4, 26)];
-        titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        titleLabel.numberOfLines = 2;
-        titleLabel.textColor = [LTTheme text];
-        titleLabel.text = title;
-        [tile addSubview:titleLabel];
-
-        UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(2, artH + 30, tileWidth - 4, 12)];
-        subtitleLabel.font = [UIFont systemFontOfSize:11];
-        subtitleLabel.textColor = [LTTheme secondaryText];
-        subtitleLabel.text = subtitle;
-        [tile addSubview:subtitleLabel];
-
-        [_scrollView addSubview:tile];
-        x += tileWidth + gap;
-        index += 1;
-    }
-    CGFloat contentWidth = MAX(x, self.contentView.bounds.size.width + 1);
-    _scrollView.contentSize = CGSizeMake(contentWidth, [LTHomeRecentsCell contentHeight]);
-}
-
-- (NSString *)kindLabel:(LTBrowseKind)kind {
-    if (kind == LTBrowseKindAlbum) return @"Album";
-    if (kind == LTBrowseKindArtist) return @"Artist";
-    return @"Playlist";
-}
-
-- (void)tileTapped:(UIButton *)button {
-    NSUInteger index = (NSUInteger)button.tag;
-    if (index >= _items.count) return;
-    id obj = [_items objectAtIndex:index];
-    if ([obj isKindOfClass:[LTTrack class]]) {
-        if (self.onTrackTapped) self.onTrackTapped(obj);
-    } else if ([obj isKindOfClass:[LTBrowseItem class]]) {
-        if (self.onBrowseTapped) self.onBrowseTapped(obj);
-    }
-}
-
-@end
+#import "LTShelfCell.h"
+#import "LTPersonalShelves.h"
 
 #pragma mark - Home
 
@@ -416,6 +162,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 - (void)authDidChange:(NSNotification *)notification {
     self.homeShelves = nil;
     self.radioSeeds = nil;
+    [LTPersonalShelves invalidate];
     self.libraryItems = nil;
     self.historyTracks = nil;
     self.accountLoaded = NO;
@@ -466,9 +213,8 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 // Builds one "Because you played …" shelf per recently played track (up to
-// six seeds) using YouTube Music mixes (RDAMVM<videoId>). These mixes are
-// seeded by listening, so a K-drama OST leads to more K-OST / K-pop next —
-// regardless of the device's country. Needs no sign-in.
+// six seeds) using YouTube Music mixes (RDAMVM<videoId>). The mix fetching
+// and caching live in LTPersonalShelves, shared with the Search idle state.
 - (void)loadRecentsRadioShelvesIfNeeded {
     self.recentTracks = [[LTPlaylistStore sharedStore] recentTracks];
     if (!self.recentTracks.count) {
@@ -490,57 +236,19 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
         return;
     }
 
-    // Distinct seeds, most recent first.
-    NSMutableArray *seeds = [NSMutableArray array];
-    NSMutableSet *seen = [NSMutableSet set];
-    for (LTTrack *track in self.recentTracks) {
-        if (!track.videoId.length || [seen containsObject:track.videoId]) continue;
-        [seen addObject:track.videoId];
-        [seeds addObject:track];
-        if (seeds.count >= 6) break;
-    }
+    NSArray *seeds = [LTPersonalShelves currentSeeds];
     if ([self.radioSeeds isEqualToArray:seeds]) return; // nothing new
-    self.radioSeeds = [seeds copy];
+    self.radioSeeds = seeds;
     self.radioLoading = YES;
     self.homeShelves = @[];
 
-    LTYouTubeClient *client = [LTYouTubeClient sharedClient];
     __weak LTHomeViewController *weakSelf = self;
-    // index -> shelf, so shelves appear in recency order however the
-    // parallel requests happen to finish.
-    __block NSMutableDictionary *shelfByIndex = [NSMutableDictionary dictionary];
-    __block NSInteger remaining = (NSInteger)seeds.count;
-
-    [seeds enumerateObjectsUsingBlock:^(LTTrack *seed, NSUInteger idx, BOOL *stop) {
-        [client fetchRadioTracksForPlaylistId:[NSString stringWithFormat:@"RDAMVM%@", seed.videoId]
-                                   completion:^(NSArray *tracks, NSError *error) {
-            LTHomeViewController *strongSelf = weakSelf;
-            if (!strongSelf) return;
-            if (!error && tracks.count) {
-                NSMutableArray *items = [NSMutableArray array];
-                NSMutableSet *ids = [NSMutableSet setWithObject:seed.videoId];
-                for (LTTrack *track in tracks) {
-                    if (!track.videoId.length || [ids containsObject:track.videoId]) continue;
-                    [ids addObject:track.videoId];
-                    [items addObject:track];
-                    if (items.count >= 12) break;
-                }
-                if (items.count >= 2) {
-                    NSString *title = [NSString stringWithFormat:@"Because you played %@", seed.title];
-                    NSDictionary *shelf = @{ @"title": title, @"items": items };
-                    [shelfByIndex setObject:shelf forKey:@(idx)];
-                }
-            }
-            NSMutableArray *ordered = [NSMutableArray array];
-            for (NSUInteger i = 0; i < seeds.count; i++) {
-                id shelf = [shelfByIndex objectForKey:@(i)];
-                if (shelf) [ordered addObject:shelf];
-            }
-            strongSelf.homeShelves = ordered;
-            remaining -= 1;
-            if (remaining <= 0) strongSelf.radioLoading = NO;
-            [strongSelf reloadData];
-        }];
+    [LTPersonalShelves buildShelvesWithCompletion:^(NSArray *shelves, BOOL finished) {
+        LTHomeViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.homeShelves = shelves;
+        if (finished) strongSelf.radioLoading = NO;
+        [strongSelf reloadData];
     }];
 }
 

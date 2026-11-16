@@ -14,6 +14,8 @@
 #import "LTSimpleCell.h"
 #import "LTTheme.h"
 #import "LTLog.h"
+#import "LTShelfCell.h"
+#import "LTPersonalShelves.h"
 #import <QuartzCore/QuartzCore.h>
 
 @interface LTSearchViewController () <UISearchBarDelegate, UITableViewDataSource, UITableViewDelegate,
@@ -29,6 +31,11 @@
 @property (nonatomic, strong) UILabel *emptyLabel;
 @property (nonatomic, assign) BOOL ignorePlaylistChanges;
 @property (nonatomic, assign) BOOL showingHistory;
+// Idle state (no query): recommendation content mirroring the Home screen.
+@property (nonatomic, strong) NSArray *idleChips;
+@property (nonatomic, strong) NSArray *trendingTracks;
+@property (nonatomic, assign) BOOL trendingLoading;
+@property (nonatomic, strong) NSArray *idleShelves;  // @{"title","items"}
 @end
 
 @implementation LTSearchViewController
@@ -134,7 +141,7 @@
     } else if (self.currentQuery.length && !self.results.count && !self.loading) {
         [self performSearch];
     } else if (!self.currentQuery.length && !self.showingHistory) {
-        [self showSearchHistory];
+        [self showIdleContent];
     }
 }
 
@@ -211,7 +218,7 @@
     if (query.length) {
         [self performSearch];
     } else {
-        [self showSearchHistory];
+        [self showIdleContent];
     }
 }
 
@@ -237,18 +244,111 @@
     [self promptForPlaylistNameWithTrack:nil];
 }
 
-- (void)showSearchHistory {
+- (void)showIdleContent {
     self.showingHistory = YES;
     [self.results removeAllObjects];
     self.localResults = nil;
-    [self.tableView reloadData];
-    NSArray *history = [[LTPlaylistStore sharedStore] searchHistory];
-    if (!history.count) {
-        self.emptyLabel.text = @"No search history yet.\nSearch YouTube above to get started.";
-        self.emptyLabel.hidden = NO;
-    } else {
-        self.emptyLabel.hidden = YES;
+    if (!self.idleChips.count) {
+        self.idleChips = @[@"Pop", @"Rock", @"Hip-Hop", @"Electronic", @"Jazz",
+                           @"Lo-fi", @"Workout", @"Chill", @"Focus", @"Party",
+                           @"Sleep", @"Classical"];
     }
+    self.emptyLabel.hidden = YES;
+    [self.tableView reloadData];
+    [self loadTrendingIfNeeded];
+    [self loadIdleShelvesIfNeeded];
+}
+
+// Trending strip shown in the idle state, fetched once per session.
+- (void)loadTrendingIfNeeded {
+    if (self.trendingTracks.count || self.trendingLoading) return;
+    self.trendingLoading = YES;
+    __weak LTSearchViewController *weakSelf = self;
+    [[LTYouTubeClient sharedClient] fetchTrendingSongsWithCompletion:^(NSArray *tracks, NSError *error) {
+        LTSearchViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.trendingLoading = NO;
+        if (error) {
+            LTLog(@"SEARCH trending error %@", error);
+        } else if (tracks.count) {
+            strongSelf.trendingTracks = tracks;
+        }
+        if (strongSelf.showingHistory) [strongSelf.tableView reloadData];
+    }];
+}
+
+// "Recommended for you" shelves, shared with Home via LTPersonalShelves
+// (cached per seed set, so switching tabs refetches nothing).
+- (void)loadIdleShelvesIfNeeded {
+    if (self.idleShelves.count) return;
+    __weak LTSearchViewController *weakSelf = self;
+    [LTPersonalShelves buildShelvesWithCompletion:^(NSArray *shelves, BOOL finished) {
+        LTSearchViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.idleShelves = shelves ?: @[];
+        if (strongSelf.showingHistory) [strongSelf.tableView reloadData];
+    }];
+}
+
+#pragma mark - Idle layout
+
+// Section kinds of the idle table, in display order. Computed on demand so
+// the data source always matches the current state.
+- (NSArray *)idleSections {
+    NSMutableArray *kinds = [NSMutableArray array];
+    [kinds addObject:@"chips"];
+    if ([[[LTPlaylistStore sharedStore] searchHistory] count]) [kinds addObject:@"history"];
+    if (self.trendingTracks.count) [kinds addObject:@"trending"];
+    for (NSUInteger i = 0; i < self.idleShelves.count; i++) {
+        [kinds addObject:[NSString stringWithFormat:@"shelf%d", (int)i]];
+    }
+    return kinds;
+}
+
+- (NSString *)idleKindForSection:(NSInteger)section {
+    NSArray *kinds = [self idleSections];
+    if (section < 0 || section >= (NSInteger)kinds.count) return nil;
+    return [kinds objectAtIndex:(NSUInteger)section];
+}
+
+- (NSDictionary *)shelfForSection:(NSInteger)section {
+    NSString *kind = [self idleKindForSection:section];
+    if (kind.length <= 5 || ![kind hasPrefix:@"shelf"]) return nil;
+    NSInteger index = [kind substringFromIndex:5].integerValue;
+    if (index < 0 || index >= (NSInteger)self.idleShelves.count) return nil;
+    return [self.idleShelves objectAtIndex:(NSUInteger)index];
+}
+
+- (void)playTrack:(LTTrack *)track fromItems:(NSArray *)items sourceName:(NSString *)name {
+    NSInteger index = 0;
+    for (NSUInteger i = 0; i < (NSInteger)items.count; i++) {
+        if ([items objectAtIndex:(NSUInteger)i] == track) { index = (NSInteger)i; break; }
+    }
+    [[LTPlayerController sharedController] playQueue:items atIndex:index];
+    [LTPlayerController sharedController].queueSourceName = name;
+    [(LTTabBarController *)self.tabBarController showNowPlaying];
+}
+
+- (void)openBrowseItem:(LTBrowseItem *)bi {
+    UIViewController *detail = nil;
+    switch (bi.kind) {
+        case LTBrowseKindAlbum:
+            detail = [[LTTrackListViewController alloc] initWithBrowseId:bi.browseId
+                                                                    kind:LTBrowseKindAlbum
+                                                                   title:bi.title];
+            break;
+        case LTBrowseKindPlaylist:
+            detail = [[LTTrackListViewController alloc] initWithBrowseId:bi.browseId
+                                                                    kind:LTBrowseKindPlaylist
+                                                                   title:bi.title];
+            break;
+        case LTBrowseKindArtist:
+        default:
+            detail = [[LTArtistViewController alloc] initWithBrowseId:bi.browseId
+                                                               title:bi.title];
+            break;
+    }
+    if (detail) [self.navigationController pushViewController:detail animated:YES];
 }
 
 - (void)performSearch {
@@ -260,7 +360,7 @@
     NSString *query = self.searchBar.text;
     query = [query stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!query.length) {
-        [self showSearchHistory];
+        [self showIdleContent];
         return;
     }
     self.showingHistory = NO;
@@ -478,13 +578,13 @@
     [self.results removeAllObjects];
     self.localResults = nil;
     self.emptyLabel.hidden = YES;
-    [self showSearchHistory];
+    [self showIdleContent];
 }
 
 - (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
     searchBar.showsCancelButton = YES;
     if (!searchBar.text.length && !self.currentQuery.length) {
-        [self showSearchHistory];
+        [self showIdleContent];
     }
 }
 
@@ -492,21 +592,34 @@
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     if ([self isPlaylistsMode]) return 1;
+    if (self.showingHistory) return (NSInteger)[self idleSections].count;
     return [self hasLocalSection] ? 2 : 1;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if ([self isPlaylistsMode]) return (NSInteger)self.results.count;
+    if (self.showingHistory) {
+        NSString *kind = [self idleKindForSection:section];
+        if ([kind isEqualToString:@"chips"] || [kind isEqualToString:@"trending"]) return 1;
+        if ([kind isEqualToString:@"history"]) {
+            return (NSInteger)[[[LTPlaylistStore sharedStore] searchHistory] count];
+        }
+        return 1; // recommended shelf strip
+    }
     if ([self hasLocalSection] && section == 0) {
         return self.localResults.count > 0 ? (NSInteger)self.localResults.count : 1;
-    }
-    if (self.showingHistory) {
-        return (NSInteger)[[[LTPlaylistStore sharedStore] searchHistory] count];
     }
     return (NSInteger)self.results.count;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (self.showingHistory) {
+        NSString *kind = [self idleKindForSection:section];
+        if ([kind isEqualToString:@"history"]) return @"Recent Searches";
+        if ([kind isEqualToString:@"trending"]) return @"Trending";
+        NSDictionary *shelf = [self shelfForSection:section];
+        return [shelf objectForKey:@"title"];
+    }
     if ([self hasLocalSection]) {
         if (section == 0) return @"From Your Library";
         if (section == 1) return @"YouTube";
@@ -515,13 +628,65 @@
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (self.showingHistory) {
+        NSString *kind = [self idleKindForSection:indexPath.section];
+        if ([kind isEqualToString:@"chips"]) return [LTChipStripCell contentHeight];
+        if ([kind isEqualToString:@"history"]) return 44.0f;
+        return [LTHomeRecentsCell contentHeight];
+    }
     if (![self isPlaylistsMode] && [self hasLocalSection] && indexPath.section == 0) return 60.0f;
-    if (self.showingHistory) return 44.0f;
     return 60.0f;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (self.showingHistory) {
+        NSString *kind = [self idleKindForSection:indexPath.section];
+
+        if ([kind isEqualToString:@"chips"]) {
+            static NSString *ChipCellId = @"LTSearchChipCell";
+            LTChipStripCell *cell = [tableView dequeueReusableCellWithIdentifier:ChipCellId];
+            if (!cell) {
+                cell = [[LTChipStripCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ChipCellId];
+            }
+            __weak LTSearchViewController *weakSelf = self;
+            cell.onChipTapped = ^(NSInteger index, NSString *title) {
+                LTSearchViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.searchBar.text = title;
+                [strongSelf performSearch];
+            };
+            [cell setChips:self.idleChips];
+            return cell;
+        }
+
+        if ([kind isEqualToString:@"trending"] || [kind hasPrefix:@"shelf"]) {
+            NSDictionary *shelf = [self shelfForSection:indexPath.section];
+            NSArray *items = shelf ? [shelf objectForKey:@"items"] : nil;
+            BOOL isTrending = [kind isEqualToString:@"trending"];
+            if (!items && isTrending) items = self.trendingTracks;
+
+            static NSString *StripCellId = @"LTSearchStripCell";
+            LTHomeShelfCell *cell = [tableView dequeueReusableCellWithIdentifier:StripCellId];
+            if (!cell) {
+                cell = [[LTHomeShelfCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:StripCellId];
+            }
+            __weak LTSearchViewController *weakSelf = self;
+            cell.onTrackTapped = ^(LTTrack *track) {
+                LTSearchViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf playTrack:track
+                            fromItems:items
+                           sourceName:isTrending ? @"Trending" : @"Recommended"];
+            };
+            cell.onBrowseTapped = ^(LTBrowseItem *item) {
+                LTSearchViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf openBrowseItem:item];
+            };
+            [cell setItems:items];
+            return cell;
+        }
+
         static NSString *HistoryCellId = @"LTHistoryCell";
         NSArray *history = [[LTPlaylistStore sharedStore] searchHistory];
         UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:HistoryCellId];
@@ -647,7 +812,10 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (self.showingHistory) {
+        NSString *kind = [self idleKindForSection:indexPath.section];
+        if (![kind isEqualToString:@"history"]) return; // strips/chips handle their own taps
         NSArray *history = [[LTPlaylistStore sharedStore] searchHistory];
+        if (indexPath.row >= (NSInteger)history.count) return;
         self.searchBar.text = [history objectAtIndex:(NSUInteger)indexPath.row];
         [self performSearch];
         return;
@@ -669,26 +837,7 @@
         }
         [(LTTabBarController *)self.tabBarController showNowPlaying];
     } else if ([item isKindOfClass:[LTBrowseItem class]]) {
-        LTBrowseItem *bi = item;
-        UIViewController *detail = nil;
-        switch (bi.kind) {
-            case LTBrowseKindAlbum:
-                detail = [[LTTrackListViewController alloc] initWithBrowseId:bi.browseId
-                                                                       kind:LTBrowseKindAlbum
-                                                                      title:bi.title];
-                break;
-            case LTBrowseKindPlaylist:
-                detail = [[LTTrackListViewController alloc] initWithBrowseId:bi.browseId
-                                                                       kind:LTBrowseKindPlaylist
-                                                                      title:bi.title];
-                break;
-            case LTBrowseKindArtist:
-            default:
-                detail = [[LTArtistViewController alloc] initWithBrowseId:bi.browseId
-                                                                   title:bi.title];
-                break;
-        }
-        if (detail) [self.navigationController pushViewController:detail animated:YES];
+        [self openBrowseItem:item];
     } else if ([item isKindOfClass:[LTLocalPlaylist class]]) {
         LTLocalPlaylist *playlist = item;
         LTLocalPlaylistDetailViewController *detail = [[LTLocalPlaylistDetailViewController alloc] initWithPlaylist:playlist];

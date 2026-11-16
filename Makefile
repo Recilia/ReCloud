@@ -42,6 +42,8 @@ ReinMusic_FILES = main.m \
 	LTP2PSync.m \
 	LTLocalPlaylistDetailViewController.m \
 	LTMediaCell.m \
+	LTShelfCell.m \
+	LTPersonalShelves.m \
 	LTTextUtils.m \
 	LTTheme.m \
 	LTSafeArea.m \
