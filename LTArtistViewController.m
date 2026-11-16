@@ -7,6 +7,7 @@
 #import "LTTabBarController.h"
 #import "LTPlayerController.h"
 #import "LTSongMenu.h"
+#import "LTTableSongMenu.h"
 #import "LTTheme.h"
 
 @interface LTArtistViewController () <UIActionSheetDelegate>
@@ -43,6 +44,17 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [LTTheme groupedBackground];
     [self.view addSubview:self.tableView];
+    __weak LTArtistViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTArtistViewController *strongSelf = weakSelf;
+        if (!strongSelf) return nil;
+        if (indexPath.section == 0 && strongSelf.topSongs.count &&
+            indexPath.row < (NSInteger)strongSelf.topSongs.count) {
+            return [strongSelf.topSongs objectAtIndex:(NSUInteger)indexPath.row];
+        }
+        return nil; // album rows have no song menu
+    }];
 
     self.headerView = [[LTHeaderView alloc] initWithWidth:self.view.bounds.size.width];
     self.tableView.tableHeaderView = self.headerView;

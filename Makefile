@@ -45,6 +45,7 @@ ReinMusic_FILES = main.m \
 	LTShelfCell.m \
 	LTPersonalShelves.m \
 	LTToast.m \
+	LTTableSongMenu.m \
 	LTTextUtils.m \
 	LTTheme.m \
 	LTSafeArea.m \

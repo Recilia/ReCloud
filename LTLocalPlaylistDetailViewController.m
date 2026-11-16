@@ -9,6 +9,7 @@
 #import "LTSpinnerView.h"
 #import "LTTheme.h"
 #import "LTLog.h"
+#import "LTTableSongMenu.h"
 
 #define kHeaderHeight 96.0f
 #define kArtworkSize 80.0f
@@ -58,6 +59,13 @@
         self.tableView.separatorInset = UIEdgeInsetsMake(0, 60, 0, 0);
     }
     [self.view addSubview:self.tableView];
+    __weak LTLocalPlaylistDetailViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTLocalPlaylistDetailViewController *strongSelf = weakSelf;
+        if (!strongSelf || indexPath.row >= (NSInteger)strongSelf.playlist.tracks.count) return nil;
+        return [strongSelf.playlist.tracks objectAtIndex:(NSUInteger)indexPath.row];
+    }];
 
     [self buildHeaderView];
     [self refreshHeader];

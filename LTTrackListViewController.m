@@ -8,6 +8,7 @@
 #import "LTPlaylistStore.h"
 #import "LTPlaylistPicker.h"
 #import "LTSongMenu.h"
+#import "LTTableSongMenu.h"
 #import "LTTheme.h"
 #import "LTLog.h"
 #import <QuartzCore/QuartzCore.h>
@@ -59,6 +60,13 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [LTTheme background];
     [self.view addSubview:self.tableView];
+    __weak LTTrackListViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTTrackListViewController *strongSelf = weakSelf;
+        if (!strongSelf || indexPath.row >= (NSInteger)strongSelf.tracks.count) return nil;
+        return [strongSelf.tracks objectAtIndex:(NSUInteger)indexPath.row];
+    }];
 
     self.tableView.tableHeaderView = [self buildHeaderView];
 

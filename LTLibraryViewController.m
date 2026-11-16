@@ -13,6 +13,7 @@
 #import "LTSimpleCell.h"
 #import "LTTheme.h"
 #import "LTAuth.h"
+#import "LTTableSongMenu.h"
 
 // Cached copy of the signed-in account's playlists (Settings → Data management
 // has no cache clearing for this; it refreshes on next successful fetch).
@@ -92,6 +93,19 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [LTTheme background];
     [self.view addSubview:self.tableView];
+    // Hold a downloaded-song row (Songs segment) to open the song menu;
+    // a vertical drag still scrolls.
+    __weak LTLibraryViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTLibraryViewController *strongSelf = weakSelf;
+        if (!strongSelf) return nil;
+        if (strongSelf.currentSegment != LTLibrarySegmentSongs) return nil;
+        NSArray *items = [strongSelf currentItems];
+        if (indexPath.row >= (NSInteger)items.count) return nil;
+        id item = [items objectAtIndex:(NSUInteger)indexPath.row];
+        return [item isKindOfClass:[LTTrack class]] ? item : nil;
+    }];
 
     self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, tableY + 100, bounds.size.width - 48, 60)];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;

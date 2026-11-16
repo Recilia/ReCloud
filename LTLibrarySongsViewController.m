@@ -7,6 +7,7 @@
 #import "LTModel.h"
 #import "LTLog.h"
 #import "LTTheme.h"
+#import "LTTableSongMenu.h"
 
 @interface LTLibrarySongsViewController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate>
 @property (nonatomic, strong) NSMutableArray *tracks;
@@ -42,6 +43,13 @@
         self.tableView.separatorInset = UIEdgeInsetsMake(0, 60, 0, 0);
     }
     [self.view addSubview:self.tableView];
+    __weak LTLibrarySongsViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTLibrarySongsViewController *strongSelf = weakSelf;
+        if (!strongSelf || indexPath.row >= (NSInteger)strongSelf.tracks.count) return nil;
+        return [strongSelf.tracks objectAtIndex:(NSUInteger)indexPath.row];
+    }];
 
     UIBarButtonItem *shuffleItem = [[UIBarButtonItem alloc] initWithTitle:@"Shuffle"
                                                                     style:UIBarButtonItemStyleBordered

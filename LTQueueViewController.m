@@ -4,6 +4,7 @@
 #import "LTGraphics.h"
 #import "LTLog.h"
 #import "LTSimpleCell.h"
+#import "LTTableSongMenu.h"
 
 @interface LTQueueViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *tableView;
@@ -36,6 +37,17 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.tableView];
+    // Hold a queue row to open the song menu; a vertical drag still scrolls
+    // (and the Edit button enables the reorder grips).
+    __weak LTQueueViewController *weakSelf = self;
+    [self.tableView lt_addSongMenuWithViewController:self
+                                   trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+        LTQueueViewController *strongSelf = weakSelf;
+        if (!strongSelf) return nil;
+        NSArray *queue = [[LTPlayerController sharedController] queue];
+        if (indexPath.row >= (NSInteger)queue.count) return nil;
+        return [queue objectAtIndex:(NSUInteger)indexPath.row];
+    }];
 
     [self applyBackgroundPref];
 }

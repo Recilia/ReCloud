@@ -17,6 +17,7 @@
 #import "LTShelfCell.h"
 #import "LTPersonalShelves.h"
 #import "LTToast.h"
+#import "LTTableSongMenu.h"
 #import <QuartzCore/QuartzCore.h>
 
 @interface LTSearchViewController () <UISearchBarDelegate, UITableViewDataSource, UITableViewDelegate,
@@ -96,6 +97,17 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [LTTheme background];
     [self.view addSubview:self.tableView];
+    // Hold a result row to open the song menu; a vertical drag still scrolls.
+    if (![self isPlaylistsMode]) {
+        __weak LTSearchViewController *weakSelf = self;
+        [self.tableView lt_addSongMenuWithViewController:self
+                                       trackAtIndexPath:^LTTrack *(NSIndexPath *indexPath) {
+            LTSearchViewController *strongSelf = weakSelf;
+            if (!strongSelf) return nil;
+            id item = [strongSelf itemAtIndexPath:indexPath];
+            return [item isKindOfClass:[LTTrack class]] ? item : nil;
+        }];
+    }
 
     self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, 120, bounds.size.width - 48, 60)];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
