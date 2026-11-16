@@ -14,6 +14,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import "LTShelfCell.h"
 #import "LTPersonalShelves.h"
+#import "LTToast.h"
+#import "LTLucideIcons.h"
 
 #pragma mark - Home
 
@@ -29,6 +31,8 @@
 @property (nonatomic, strong) NSArray *radioSeeds;     // LTTrack seeds the home shelves were built from
 @property (nonatomic, assign) BOOL radioLoading;
 @property (nonatomic, assign) BOOL serverHomeLoading;
+@property (nonatomic, strong) UIBarButtonItem *refreshItem;
+@property (nonatomic, assign) BOOL refreshing;
 @property (nonatomic, strong) NSArray *libraryItems;   // LTBrowseItem
 @property (nonatomic, strong) NSArray *historyTracks;  // LTTrack
 @property (nonatomic, strong) NSArray *sections;       // section layout
@@ -50,6 +54,12 @@
                                                                              style:UIBarButtonItemStyleBordered
                                                                             target:self
                                                                             action:@selector(statsTapped:)];
+    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithImage:[LTLucideIcons iconNamed:@"refresh-cw" size:20.0f color:[LTTheme text]]
+                                                               style:UIBarButtonItemStyleBordered
+                                                              target:self
+                                                              action:@selector(refreshTapped:)];
+    self.navigationItem.leftBarButtonItem = refresh;
+    self.refreshItem = refresh;
 
     CGRect bounds = self.view.bounds;
     self.tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 0, bounds.size.width, bounds.size.height)
@@ -157,6 +167,58 @@
     [self.tableView reloadData];
 }
 
+#pragma mark - Refresh
+
+// Re-fetches the home content: radio-mix shelves, server shelves/account
+// library + history when signed in, and the banner stats. The button shows
+// a spinner and is disabled while any of those requests are in flight; on
+// failure the previous content stays on screen.
+- (void)refreshTapped:(id)sender {
+    if (self.refreshing) return;
+    self.refreshing = YES;
+    [self setRefreshItemBusy:YES];
+
+    [LTPersonalShelves invalidate];
+    self.homeShelves = nil;
+    self.radioSeeds = nil;
+    self.accountLoaded = NO;
+    self.accountLoading = NO;
+
+    __weak LTHomeViewController *weakSelf = self;
+    __block NSInteger remaining = 2;
+    void (^jobDone)(void) = ^{
+        LTHomeViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        if (--remaining > 0) return;
+        strongSelf.refreshing = NO;
+        [strongSelf setRefreshItemBusy:NO];
+        [strongSelf updateBannerText];
+        [strongSelf reloadData];
+        if (strongSelf.sections.count == 0 && strongSelf.recentTracks.count) {
+            [strongSelf showToast:@"Couldn't refresh — check your connection."];
+        }
+    };
+
+    [self loadRecentsRadioShelvesIfNeededWithCompletion:jobDone];
+    [self loadAccountContentIfNeededWithCompletion:jobDone];
+}
+
+- (void)setRefreshItemBusy:(BOOL)busy {
+    if (busy) {
+        UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+                                            initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+        spinner.hidesWhenStopped = YES;
+        [spinner startAnimating];
+        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:spinner];
+    } else {
+        self.navigationItem.leftBarButtonItem = self.refreshItem;
+    }
+}
+
+- (void)showToast:(NSString *)text {
+    [LTToast showText:text inView:self.view];
+}
+
 #pragma mark - Account content
 
 - (void)authDidChange:(NSNotification *)notification {
@@ -173,13 +235,26 @@
 }
 
 - (void)loadAccountContentIfNeeded {
-    // The home shelves are built locally from the listening history (radio
-    // mixes seeded by recently played tracks), so they follow what the user
-    // actually listened to instead of YouTube's geo-personalized home, which
-    // is dominated by content from the user's country.
     [self loadRecentsRadioShelvesIfNeeded];
-    if (![[LTAuth sharedAuth] signedIn]) return;
-    if (self.accountLoaded || self.accountLoading) return;
+    [self loadAccountContentIfNeededWithCompletion:nil];
+}
+
+// The home shelves are built locally from the listening history (radio
+// mixes seeded by recently played tracks), so they follow what the user
+// actually listened to instead of YouTube's geo-personalized home, which
+// is dominated by content from the user's country. The optional completion
+// fires exactly once, when both account requests are done (immediately when
+// nothing needed fetching). Note: this does NOT build the radio shelves;
+// callers that need them invoke loadRecentsRadioShelvesIfNeeded themselves.
+- (void)loadAccountContentIfNeededWithCompletion:(void (^)(void))completion {
+    if (![[LTAuth sharedAuth] signedIn]) {
+        if (completion) completion();
+        return;
+    }
+    if (self.accountLoaded || self.accountLoading) {
+        if (completion) completion();
+        return;
+    }
     self.accountLoading = YES;
     [self.accountSpinner startAnimating];
 
@@ -198,6 +273,7 @@
         strongSelf.accountLoaded = YES;
         [strongSelf.accountSpinner stopAnimating];
         [strongSelf reloadData];
+        if (completion) completion();
     };
 
     [client fetchLibraryPlaylistsWithCompletion:^(NSArray *items, NSError *error) {
@@ -215,7 +291,13 @@
 // Builds one "Because you played …" shelf per recently played track (up to
 // six seeds) using YouTube Music mixes (RDAMVM<videoId>). The mix fetching
 // and caching live in LTPersonalShelves, shared with the Search idle state.
+// The optional completion fires exactly once, after every mix request of the
+// build has finished (immediately when nothing needed fetching).
 - (void)loadRecentsRadioShelvesIfNeeded {
+    [self loadRecentsRadioShelvesIfNeededWithCompletion:nil];
+}
+
+- (void)loadRecentsRadioShelvesIfNeededWithCompletion:(void (^)(void))completion {
     self.recentTracks = [[LTPlaylistStore sharedStore] recentTracks];
     if (!self.recentTracks.count) {
         // No listening history yet: fall back to YouTube's server home
@@ -231,23 +313,33 @@
                 strongSelf.serverHomeLoading = NO;
                 if (shelves.count) strongSelf.homeShelves = shelves;
                 [strongSelf reloadData];
+                if (completion) completion();
             }];
+        } else {
+            if (completion) completion();
         }
         return;
     }
 
     NSArray *seeds = [LTPersonalShelves currentSeeds];
-    if ([self.radioSeeds isEqualToArray:seeds]) return; // nothing new
+    if ([self.radioSeeds isEqualToArray:seeds]) { // nothing new
+        if (completion) completion();
+        return;
+    }
     self.radioSeeds = seeds;
     self.radioLoading = YES;
-    self.homeShelves = @[];
 
     __weak LTHomeViewController *weakSelf = self;
     [LTPersonalShelves buildShelvesWithCompletion:^(NSArray *shelves, BOOL finished) {
         LTHomeViewController *strongSelf = weakSelf;
         if (!strongSelf) return;
-        strongSelf.homeShelves = shelves;
-        if (finished) strongSelf.radioLoading = NO;
+        // Keep the previous content if every mix failed, so a refresh can
+        // never blank the page.
+        if (shelves.count) strongSelf.homeShelves = shelves;
+        if (finished) {
+            strongSelf.radioLoading = NO;
+            if (completion) completion();
+        }
         [strongSelf reloadData];
     }];
 }
