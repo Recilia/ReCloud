@@ -1,5 +1,6 @@
 #import "LTLibraryViewController.h"
 #import "LTLibrarySongsViewController.h"
+#import "LTTrackListViewController.h"
 #import "LTPlaylistStore.h"
 #import "LTPlayerController.h"
 #import "LTTabBarController.h"
@@ -11,6 +12,11 @@
 #import "LTLog.h"
 #import "LTSimpleCell.h"
 #import "LTTheme.h"
+#import "LTAuth.h"
+
+// Cached copy of the signed-in account's playlists (Settings → Data management
+// has no cache clearing for this; it refreshes on next successful fetch).
+static NSString * const kLTLibraryAccountPlaylistsCache = @"LTLibraryAccountPlaylistsCache";
 
 typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     LTLibrarySegmentPlaylists = 0,
@@ -28,6 +34,10 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 @property (nonatomic, strong) NSMutableArray *songs;
 @property (nonatomic, strong) NSArray *artists;
 @property (nonatomic, strong) NSArray *albums;
+@property (nonatomic, strong) NSMutableArray *accountItems;  // LTBrowseItem (account playlists)
+@property (nonatomic, assign) BOOL accountLoading;
+@property (nonatomic, assign) BOOL accountError;
+@property (nonatomic, assign) BOOL accountRefreshed;
 @property (nonatomic, strong) LTTrack *pendingRemoveTrack;
 @property (nonatomic, assign) BOOL ignorePlaylistChanges;
 @property (nonatomic, strong) NSMutableSet *attemptedArtistAvatars;
@@ -62,6 +72,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     self.view.backgroundColor = [LTTheme background];
     self.currentSegment = LTLibrarySegmentPlaylists;
     self.attemptedArtistAvatars = [NSMutableSet set];
+    [self loadAccountCache];
 
     CGRect bounds = self.view.bounds;
     self.segControl = [[UISegmentedControl alloc] initWithItems:@[@"Playlists", @"Songs", @"Artists", @"Albums"]];
@@ -100,8 +111,13 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
                                              selector:@selector(storeDidChange:)
                                                  name:LTPlaylistsDidChangeNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(authDidChange:)
+                                                 name:LTAuthDidChangeNotification
+                                               object:nil];
     [self reloadModels];
     [self reloadForSegment];
+    [self refreshAccountPlaylists];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -118,6 +134,79 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 }
 
 #pragma mark - Data
+
+// Account playlists are persisted so the tab is never blank on relaunch even
+// before (or without) a network refresh.
+- (void)loadAccountCache {
+    NSArray *saved = [[NSUserDefaults standardUserDefaults] arrayForKey:kLTLibraryAccountPlaylistsCache];
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSDictionary *dict in saved) {
+        if (![dict isKindOfClass:[NSDictionary class]]) continue;
+        LTBrowseItem *item = [[LTBrowseItem alloc] init];
+        item.kind = LTBrowseKindPlaylist;
+        item.browseId = [dict objectForKey:@"browseId"];
+        item.title = [dict objectForKey:@"title"];
+        item.subtitle = [dict objectForKey:@"subtitle"];
+        item.thumbnailURL = [dict objectForKey:@"thumb"];
+        if (item.browseId.length && item.title.length) [items addObject:item];
+    }
+    self.accountItems = items;
+}
+
+- (void)saveAccountCache {
+    NSMutableArray *array = [NSMutableArray array];
+    for (LTBrowseItem *item in self.accountItems) {
+        [array addObject:@{ @"browseId": item.browseId ?: @"",
+                            @"title": item.title ?: @"",
+                            @"subtitle": item.subtitle ?: @"",
+                            @"thumb": item.thumbnailURL ?: @"" }];
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:array forKey:kLTLibraryAccountPlaylistsCache];
+}
+
+- (BOOL)signedIn {
+    return [[LTAuth sharedAuth] signedIn];
+}
+
+// Refreshes the account playlists once per session (and after each sign-in).
+// On failure the cached copy stays visible; the error state is only shown when
+// there is nothing cached at all.
+- (void)refreshAccountPlaylists {
+    if (!self.signedIn) return;
+    if (self.accountLoading) return;
+    self.accountLoading = YES;
+    self.accountError = NO;
+    [self reloadForSegment];
+
+    LTYouTubeClient *client = [LTYouTubeClient sharedClient];
+    __weak LTLibraryViewController *weakSelf = self;
+    [client fetchLibraryPlaylistsWithCompletion:^(NSArray *items, NSError *error) {
+        LTLibraryViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.accountLoading = NO;
+        strongSelf.accountRefreshed = YES;
+        if (error) {
+            LTLog(@"LIB account playlists error %@", error);
+            strongSelf.accountError = (strongSelf.accountItems.count == 0);
+        } else {
+            strongSelf.accountItems = [items mutableCopy] ?: [NSMutableArray array];
+            strongSelf.accountError = NO;
+            [strongSelf saveAccountCache];
+        }
+        [strongSelf reloadForSegment];
+    }];
+}
+
+- (void)authDidChange:(NSNotification *)notification {
+    self.accountRefreshed = NO;
+    self.accountError = NO;
+    if (!self.signedIn) {
+        self.accountItems = [NSMutableArray array];
+        [self saveAccountCache];
+    }
+    [self reloadForSegment];
+    [self refreshAccountPlaylists];
+}
 
 - (void)reloadModels {
     self.playlists = [[[LTPlaylistStore sharedStore] playlists] mutableCopy] ?: [NSMutableArray array];
@@ -233,14 +322,28 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 
 - (void)refreshEmptyState {
     NSArray *items = [self currentItems];
+    if (self.currentSegment == LTLibrarySegmentPlaylists) {
+        BOOL hasAccount = self.accountItems.count > 0 || self.accountLoading;
+        if (self.playlists.count || hasAccount) {
+            self.emptyLabel.hidden = YES;
+            return;
+        }
+        if (self.accountError) {
+            self.emptyLabel.text = @"Couldn't load your account playlists.\nTap the playlist list to retry.";
+            self.emptyLabel.hidden = NO;
+            return;
+        }
+        self.emptyLabel.text = self.signedIn
+            ? @"No playlists found on your account.\nTap + to create one on this device."
+            : @"No playlists yet.\nTap + to create one, or sign in from Settings to see your account playlists.";
+        self.emptyLabel.hidden = NO;
+        return;
+    }
     if (items.count) {
         self.emptyLabel.hidden = YES;
         return;
     }
     switch (self.currentSegment) {
-        case LTLibrarySegmentPlaylists:
-            self.emptyLabel.text = @"No playlists yet.\nTap + to create one.";
-            break;
         case LTLibrarySegmentSongs:
             self.emptyLabel.text = @"No downloaded songs yet.\nUse the download button in Search or in a playlist.";
             break;
@@ -317,19 +420,85 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 
 #pragma mark - UITableViewDataSource
 
+// Playlists segment shows two sections: the signed-in account's playlists on
+// top, local playlists stored on the device below.
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 1;
+    return (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn) ? 2 : 1;
+}
+
+- (NSInteger)accountSectionRowCount {
+    if (self.accountLoading) return 1;
+    if (self.accountError) return 1;
+    return (NSInteger)self.accountItems.count;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn && section == 0) {
+        return [self accountSectionRowCount];
+    }
+    if (self.currentSegment == LTLibrarySegmentPlaylists) return (NSInteger)self.playlists.count;
     return (NSInteger)[[self currentItems] count];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn) {
+        return section == 0 ? @"Account playlists" : @"On this device";
+    }
+    return @"";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *TrackCellId = @"LTLibraryTrackCell";
     static NSString *BucketCellId = @"LTLibraryBucketCell";
-    NSArray *items = [self currentItems];
-    id item = [items objectAtIndex:(NSUInteger)indexPath.row];
+
+    if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn && indexPath.section == 0) {
+        static NSString *AccountCellId = @"LTLibraryAccountCell";
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:AccountCellId];
+        if (!cell) {
+            cell = [[LTSimpleCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:AccountCellId];
+            cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
+            cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
+            cell.detailTextLabel.textColor = [LTTheme secondaryText];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
+        cell.imageView.image = nil;
+        cell.accessibilityIdentifier = nil;
+        if (self.accountLoading) {
+            cell.textLabel.text = @"Loading your playlists…";
+            cell.detailTextLabel.text = @"";
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            return cell;
+        }
+        if (self.accountError) {
+            cell.textLabel.text = @"Couldn't load account playlists";
+            cell.detailTextLabel.text = @"Tap to retry";
+            cell.detailTextLabel.textColor = [LTTheme accent];
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            return cell;
+        }
+        cell.detailTextLabel.textColor = [LTTheme secondaryText];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        LTBrowseItem *item = [self.accountItems objectAtIndex:(NSUInteger)indexPath.row];
+        cell.textLabel.text = item.title;
+        cell.detailTextLabel.text = item.subtitle.length ? item.subtitle : @"Playlist";
+        cell.accessibilityIdentifier = item.browseId;
+        if (item.thumbnailURL.length) {
+            NSString *artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:item.thumbnailURL];
+            __weak UITableViewCell *weakCell = cell;
+            [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
+                UITableViewCell *strongCell = weakCell;
+                if (image && [strongCell.accessibilityIdentifier isEqualToString:item.browseId]) {
+                    strongCell.imageView.image = image;
+                }
+            }];
+        }
+        return cell;
+    }
+
+    NSArray *items = [self currentItems];    id item = [items objectAtIndex:(NSUInteger)indexPath.row];
 
     if (self.currentSegment == LTLibrarySegmentSongs) {
         LTMediaCell *cell = [tableView dequeueReusableCellWithIdentifier:TrackCellId];
@@ -499,17 +668,21 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 }
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
-    return self.currentSegment == LTLibrarySegmentPlaylists;
+    if (self.currentSegment != LTLibrarySegmentPlaylists) return NO;
+    if (self.signedIn && indexPath.section == 0) return NO; // account rows aren't editable
+    return YES;
 }
 
 - (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (self.currentSegment != LTLibrarySegmentPlaylists) return UITableViewCellEditingStyleNone;
+    if (self.signedIn && indexPath.section == 0) return UITableViewCellEditingStyleNone;
     if (indexPath.row >= (NSInteger)self.playlists.count) return UITableViewCellEditingStyleNone;
     return UITableViewCellEditingStyleDelete;
 }
 
 - (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath {
     if (editingStyle != UITableViewCellEditingStyleDelete) return;
+    if (self.signedIn && indexPath.section == 0) return;
     if (indexPath.row >= (NSInteger)self.playlists.count) return;
     LTLocalPlaylist *playlist = [self.playlists objectAtIndex:(NSUInteger)indexPath.row];
     self.ignorePlaylistChanges = YES;
@@ -522,6 +695,23 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+
+    if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn && indexPath.section == 0) {
+        if (self.accountError) {
+            [self refreshAccountPlaylists];
+            return;
+        }
+        if (self.accountLoading) return;
+        if (indexPath.row >= (NSInteger)self.accountItems.count) return;
+        LTBrowseItem *item = [self.accountItems objectAtIndex:(NSUInteger)indexPath.row];
+        LTTrackListViewController *detail =
+            [[LTTrackListViewController alloc] initWithBrowseId:item.browseId
+                                                            kind:item.kind
+                                                           title:item.title];
+        [self.navigationController pushViewController:detail animated:YES];
+        return;
+    }
+
     NSArray *items = [self currentItems];
     if (indexPath.row >= (NSInteger)items.count) return;
     id item = [items objectAtIndex:(NSUInteger)indexPath.row];
