@@ -4,20 +4,18 @@
 #import "LTLog.h"
 #import "LTTheme.h"
 
-// Google account sign-in inside a UIWebView. On legacy iOS the UIWebView
-// shares its cookies with NSHTTPCookieStorage, so once the user is logged
-// in the SAPISID cookie we need for authenticated requests is readable.
-// A manual cookie paste is offered as a guaranteed fallback for devices
-// where Google's login page refuses to cooperate.
+// Google account sign-in via a pasted SAPISID cookie. The in-app web login
+// (UIWebView) was removed: Google's login page crashes the legacy WebKit
+// engine on old armv7 devices mid-render, and the crash is native and
+// uncatchable. Pasting the SAPISID value (or the full Cookie header) from a
+// desktop browser signed into YouTube Music always works and provides the
+// exact same credentials.
 
-@interface LTSignInViewController () <UIWebViewDelegate, UIAlertViewDelegate, UITextFieldDelegate>
+@interface LTSignInViewController () <UIAlertViewDelegate, UITextFieldDelegate>
 @property (nonatomic, assign) BOOL pasteOnly;
-@property (nonatomic, strong) UIWebView *webView;
-@property (nonatomic, strong) UIActivityIndicatorView *spinner;
 @property (nonatomic, strong) UILabel *hintLabel;
-@property (nonatomic, strong) UIAlertView *pasteAlert;
-@property (nonatomic, strong) UIButton *webButton;
 @property (nonatomic, strong) UIButton *pasteButton;
+@property (nonatomic, strong) UIAlertView *pasteAlert;
 @end
 
 @implementation LTSignInViewController
@@ -47,39 +45,22 @@
 
     CGFloat width = self.view.bounds.size.width;
 
-    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, width - 24, 34)];
+    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, width - 24, 62)];
     self.hintLabel.font = [UIFont systemFontOfSize:12];
     self.hintLabel.textColor = [LTTheme secondaryText];
-    self.hintLabel.numberOfLines = 2;
+    self.hintLabel.numberOfLines = 4;
     self.hintLabel.textAlignment = NSTextAlignmentCenter;
     self.hintLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
+    self.hintLabel.text = @"Sign in to YouTube Music in a desktop browser, then\ncopy the SAPISID cookie value (DevTools → Application →\nCookies) and paste it here. A full Cookie header works too.";
     [self.view addSubview:self.hintLabel];
 
     if (self.pasteOnly) {
-        self.hintLabel.text = @"Paste the SAPISID value (or the full Cookie header)\nfrom a browser signed into YouTube Music.";
         [self pasteTapped:nil];
         return;
     }
 
-    // Google's login page is very heavy modern JavaScript, and on legacy
-    // armv7 devices the old WebKit engine crashes while rendering it (an
-    // uncatchable native crash inside WebKit). So the page is never loaded
-    // automatically: the screen opens with buttons and only loads the page
-    // when the user explicitly asks for it. The paste-cookie flow is the
-    // guaranteed fallback.
-    self.hintLabel.text = @"Google's sign-in page is heavy and can crash old\nWebKit. If it does, use Paste cookie instead.";
-    self.hintLabel.numberOfLines = 3;
-    self.hintLabel.frame = CGRectMake(12, 8, width - 24, 48);
-
-    CGFloat buttonY = CGRectGetMaxY(self.hintLabel.frame) + 8;
-    self.webButton = [self actionButtonWithTitle:@"Open Google sign-in page" y:buttonY];
-    [self.webButton addTarget:self
-                       action:@selector(openWebSignInTapped:)
-             forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.webButton];
-
-    self.pasteButton = [self actionButtonWithTitle:@"Paste SAPISID cookie instead"
-                                                 y:buttonY + CGRectGetHeight(self.webButton.frame) + 10];
+    self.pasteButton = [self actionButtonWithTitle:@"Paste SAPISID cookie"
+                                                 y:CGRectGetMaxY(self.hintLabel.frame) + 8];
     [self.pasteButton addTarget:self
                          action:@selector(pasteTapped:)
                forControlEvents:UIControlEventTouchUpInside];
@@ -98,43 +79,6 @@
     [button setTitleColor:[LTTheme text] forState:UIControlStateNormal];
     button.titleLabel.font = [UIFont systemFontOfSize:15];
     return button;
-}
-
-- (void)openWebSignInTapped:(id)sender {
-    [self.webButton removeFromSuperview];
-    self.webButton = nil;
-    [self.pasteButton removeFromSuperview];
-    self.pasteButton = nil;
-
-    CGFloat width = self.view.bounds.size.width;
-    CGFloat top = CGRectGetMaxY(self.hintLabel.frame) + 4;
-
-    self.webView = [[UIWebView alloc] initWithFrame:CGRectMake(0, top, width, self.view.bounds.size.height - top)];
-    self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.webView.backgroundColor = [UIColor whiteColor];
-    self.webView.delegate = self;
-    self.webView.scalesPageToFit = NO;
-    [self.view addSubview:self.webView];
-
-    self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    self.spinner.hidesWhenStopped = YES;
-    [self.view addSubview:self.spinner];
-    [self.spinner startAnimating];
-
-    NSURL *url = [NSURL URLWithString:@"https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F&hl=en"];
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url
-                                                           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
-                                                       timeoutInterval:60.0];
-    // Pretend to be a very old Android browser so Google serves its
-    // simplified lightweight login page instead of the modern one that
-    // crashes the legacy WebKit engine mid-render.
-    [request setValue:@"Mozilla/5.0 (Linux; U; Android 2.3.7; en-us) AppleWebKit/533.1 (KHTML, like Gecko) Version/4.0 Mobile Safari/533.1"
-       forHTTPHeaderField:@"User-Agent"];
-    [self.webView loadRequest:request];
-}
-
-- (void)layoutSubviewsInRotation {
-    // handled by autoresizing
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation {
@@ -165,28 +109,12 @@
     }];
 }
 
-#pragma mark - UIWebViewDelegate
-
-- (void)webViewDidFinishLoad:(UIWebView *)webView {
-    [self.spinner stopAnimating];
-    NSString *host = webView.request.URL.host ?: @"";
-    if ([host hasSuffix:@".google.com"] || [host hasSuffix:@"youtube.com"] || host.length == 0) {
-        [self tryAdoptCookies];
-    }
-}
-
-- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
-    [self.spinner stopAnimating];
-    if (error.code == NSURLErrorCancelled) return;
-    LTLog(@"AUTH webview load failed: %@", error);
-}
-
 #pragma mark - Buttons
 
 - (void)checkTapped:(id)sender {
     if (![self tryAdoptCookies]) {
         UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Not signed in yet"
-                                                        message:@"No Google account cookie found. Sign in in the page above, or use Paste cookie to enter SAPISID manually."
+                                                        message:@"No Google account cookie found. Paste the SAPISID cookie from a desktop browser signed into YouTube Music."
                                                        delegate:nil
                                               cancelButtonTitle:@"OK"
                                               otherButtonTitles:nil];

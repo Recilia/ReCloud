@@ -65,7 +65,7 @@ versions differ, the sync is refused.
   Size
 - **Data management** — Offline Downloads, Sync with Another Phone, Refresh Metadata & Artwork,
   Create Rein Mini Instance, Clear Offline Downloads
-- **Account** — Sign in to Google (in-app web login, or paste a SAPISID cookie), sign out
+- **Account** — Sign in to Google (paste a SAPISID cookie from a desktop browser), sign out
 
 ## Project structure
 

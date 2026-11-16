@@ -7,9 +7,8 @@
 //
 //   Authorization: SAPISIDHASH <unix-time>_<sha1("<time> <origin> <SAPISID>")>
 //
-// The SAPISID cookie is captured either from an in-app UIWebView sign-in
-// (UIWebView shares cookies with NSHTTPCookieStorage) or pasted manually
-// from a desktop browser.
+// The SAPISID cookie is pasted manually from a desktop browser signed into
+// YouTube Music (the in-app web login was removed; see LTSignInViewController).
 
 extern NSString *const LTAuthDidChangeNotification;
 
@@ -32,9 +31,9 @@ extern NSString *const LTAuthDidChangeNotification;
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
                            accountName:(NSString *)accountName;
 
-// Collects Google cookies from the shared cookie store (populated by a
-// UIWebView sign-in) and stores them. Returns YES if an APISID cookie was
-// found.
+// Collects Google cookies already present in the shared cookie store (e.g.
+// left by another app or an older sign-in) and stores them. Returns YES if
+// any whitelisted cookie was found.
 - (BOOL)adoptCookiesFromSharedStorage;
 
 // "SAPISIDHASH <time>_<digest>" for the given origin, e.g.

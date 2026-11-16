@@ -165,8 +165,7 @@ varargs `LTPath` helper safely walks nested dict/array JSON.
 Singleton holding Google account credentials for authenticated InnerTube calls, using the same
 cookie-based SAPISIDHASH scheme the YouTube Music web client uses:
 `Authorization: SAPISIDHASH <unixtime>_<sha1("<time> <origin> <SAPISID>")>`. The SAPISID cookie is
-captured either from an in-app UIWebView sign-in (UIWebView shares the shared `NSHTTPCookieStorage`)
-or pasted manually from a desktop browser. The API exposes `signedIn`, `accountName`, `sapisid`
+pasted manually from a desktop browser signed into YouTube Music (the in-app web login was removed). The API exposes `signedIn`, `accountName`, `sapisid`
 (SAPISID, then `__Secure-3PAPISID`, then `__Secure-1PAPISID`), `cookieHeader`, and methods
 `setCredentialsWithCookieHeader:accountName:`, `adoptCookiesFromSharedStorage`,
 `authorizationHeaderForOrigin:` and `signOut`. Credentials persist in NSUserDefaults and changes are
@@ -460,12 +459,13 @@ About contains version info with a hidden debug egg (`handleVersionTap` →
 theme on trait changes.
 
 ### `LTSignInViewController.h` / `LTSignInViewController.m`
-Google account sign-in screen with two flows. Default: an embedded `UIWebView` pointed at YouTube
-Music's web login (`webViewDidFinishLoad:` keeps watching; `tryAdoptCookies` harvests Google cookies
-from the shared cookie store into `LTAuth` and `finishSignIn` closes). Paste-only mode
-(`initWithPasteOnly:YES`): instructs the user to copy the SAPISID cookie from a desktop browser and
-paste it (`pasteTapped:` → `alertView:` handling), building credentials from a bare cookie header.
-`checkTapped:` manually retries cookie adoption. Handles rotation with `layoutSubviewsInRotation`.
+Google account sign-in screen, paste-only since the in-app `UIWebView` login was removed (Google's
+login page crashes the legacy WebKit engine on old armv7 devices mid-render, an uncatchable native
+crash). Shows instructions for copying the SAPISID cookie from a desktop browser (DevTools →
+Application → Cookies) and a "Paste SAPISID cookie" button (`pasteTapped:` → `alertView:` handling)
+that builds credentials from a bare token or a full cookie header. `tryAdoptCookies` harvests any
+Google cookies already in the shared cookie store into `LTAuth`; `finishSignIn` verifies the account
+via `fetchAccountNameWithCompletion:` and closes. `checkTapped:` manually retries cookie adoption.
 
 ### `LTTransitionSettings.h` / `LTTransitionSettings.m`
 Reads/writes the transition speed multiplier stored in NSUserDefaults (key `LTTransitionSpeed`; 1.0
