@@ -2,6 +2,7 @@
 #import "LTTabBarController.h"
 #import "LTGraphics.h"
 #import "LTTheme.h"
+#import "LTTransitionSettings.h"
 #import "LTSafeArea.h"
 #import "LTPlaylistStore.h"
 #import "LTYouTubeClient.h"
@@ -367,7 +368,7 @@ typedef NS_ENUM(NSInteger, LTSidebarMode) {
         [self layoutTabBarHidden:(mode != LTSidebarModeHidden) inBounds:b];
         [self layoutSidebarItemsForMode:mode height:b.size.height];
     };
-    if (animated && (modeChanged || self.landscape != landscape)) {
+    if (animated && [LTTransitionSettings animationsEnabled] && (modeChanged || self.landscape != landscape)) {
         // Soften the rail/full swap: the width walks with a gentle ease while
         // title, separator, and rows crossfade. layoutSidebarItemsForMode:
         // snaps the `hidden` flags to the destination state, which would kill

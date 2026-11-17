@@ -81,6 +81,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 - (void)setTracks:(NSArray *)tracks {
+    if (tracks == _tracks) return;  // same array object → nothing changed
     _tracks = tracks;
     _scrollView.backgroundColor = [LTTheme background];
     self.backgroundColor = [LTTheme background];
@@ -110,7 +111,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
         artwork.clipsToBounds = YES;
         [imageButton addSubview:artwork];
         if (track.thumbnailURL.length) {
-            NSString *artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:track.thumbnailURL];
+            NSString *artURL = [[LTYouTubeClient sharedClient] listThumbnailURL:track.thumbnailURL];
             __weak UIImageView *weakArtwork = artwork;
             [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
                 if (image) weakArtwork.image = image;
@@ -182,6 +183,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 - (void)setItems:(NSArray *)items {
+    if (items == _items) return;  // same array object → nothing changed
     _items = items;
     _scrollView.backgroundColor = [LTTheme background];
     self.backgroundColor = [LTTheme background];
@@ -228,7 +230,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 
         if (thumbURL.length) {
             NSString *artURL = thumbURL;
-            if (!square) artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:thumbURL];
+            if (!square) artURL = [[LTYouTubeClient sharedClient] listThumbnailURL:thumbURL];
             else artURL = [[LTYouTubeClient sharedClient] channelAvatarURL:thumbURL size:160];
             __weak UIImageView *weakArtwork = artwork;
             [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
@@ -311,6 +313,7 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
 }
 
 - (void)setChips:(NSArray *)chips {
+    if (chips == _chips) return;  // same array object → nothing changed
     _chips = chips;
     for (UIView *view in _scrollView.subviews) {
         [view removeFromSuperview];

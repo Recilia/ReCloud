@@ -1,4 +1,6 @@
 #import "LTToast.h"
+#import "LTTransitionSettings.h"
+#import <dispatch/dispatch.h>
 
 @implementation LTToast
 
@@ -13,6 +15,15 @@
     label.clipsToBounds = YES;
     label.text = text;
     [view addSubview:label];
+    if (![LTTransitionSettings animationsEnabled]) {
+        // No fade (Core Animation work on a 1s+ timer is the most expensive
+        // part of a toast): hold it on screen, then remove it with GCD.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [label removeFromSuperview];
+        });
+        return;
+    }
     [UIView animateWithDuration:1.4 delay:1.0 options:UIViewAnimationOptionCurveEaseIn
                      animations:^{ label.alpha = 0.0f; }
                      completion:^(BOOL finished) { [label removeFromSuperview]; }];

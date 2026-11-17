@@ -67,7 +67,7 @@
     self.imageURL = urlString;
     self.imageView.image = nil;
     if (!urlString.length) return;
-    NSString *artURL = [[LTYouTubeClient sharedClient] highResThumbnailURL:urlString];
+    NSString *artURL = [[LTYouTubeClient sharedClient] listThumbnailURL:urlString];
     __weak LTMediaCell *weakCell = self;
     [[LTYouTubeClient sharedClient] loadImageWithURL:artURL completion:^(UIImage *image) {
         LTMediaCell *cell = weakCell;

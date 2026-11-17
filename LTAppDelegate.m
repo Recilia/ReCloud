@@ -13,6 +13,7 @@
 #import "LTOneHandedMode.h"
 #import "LTAppIcon.h"
 #import "LTTheme.h"
+#import "LTTransitionSettings.h"
 #import "LTLog.h"
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -176,7 +177,7 @@ static void LTUncaughtExceptionHandler(NSException *e) {
     if (!root) return;
 
     if (animated) {
-        [UIView animateWithDuration:0.35f animations:^{
+        [LTTransitionSettings animateWithDuration:0.35f animations:^{
             [LTAppDelegate applyDisplayModeOnce:window root:root];
         }];
     } else {

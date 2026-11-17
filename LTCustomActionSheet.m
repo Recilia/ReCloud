@@ -90,13 +90,13 @@
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismiss)];
     [self.backgroundView addGestureRecognizer:tap];
 
-    [UIView animateWithDuration:[LTTransitionSettings durationFor:0.2f] animations:^{
+    [LTTransitionSettings animateWithDuration:0.2f animations:^{
         self.alpha = 1.0f;
     }];
 }
 
 - (void)dismiss {
-    [UIView animateWithDuration:[LTTransitionSettings durationFor:0.2f] animations:^{
+    [LTTransitionSettings animateWithDuration:0.2f animations:^{
         self.alpha = 0.0f;
     } completion:^(BOOL finished) {
         [self.backgroundView removeFromSuperview];

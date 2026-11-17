@@ -1,4 +1,5 @@
 #import "LTSongMenu.h"
+#import "LTToast.h"
 #import "LTPlaylistStore.h"
 #import "LTPlaylistPicker.h"
 #import "LTPlayerController.h"
@@ -79,19 +80,7 @@
 - (void)showToast:(NSString *)text {
     UIViewController *vc = self.presentingController;
     if (!vc) return;
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 220, 36)];
-    label.center = CGPointMake(vc.view.bounds.size.width / 2.0f, vc.view.bounds.size.height - 80);
-    label.backgroundColor = [UIColor colorWithWhite:0 alpha:0.75f];
-    label.textColor = [UIColor whiteColor];
-    label.textAlignment = NSTextAlignmentCenter;
-    label.font = [UIFont systemFontOfSize:13];
-    label.layer.cornerRadius = 6.0f;
-    label.clipsToBounds = YES;
-    label.text = text;
-    [vc.view addSubview:label];
-    [UIView animateWithDuration:1.4 delay:1.0 options:UIViewAnimationOptionCurveEaseIn
-                     animations:^{ label.alpha = 0.0f; }
-                     completion:^(BOOL finished) { [label removeFromSuperview]; }];
+    [LTToast showText:text inView:vc.view];
 }
 
 @end

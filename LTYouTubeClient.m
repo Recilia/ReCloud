@@ -52,6 +52,11 @@ static id LTPath(id root, id key, ...) {
     self = [super init];
     if (self) {
         _imageCache = [[NSCache alloc] init];
+        // 512MB-device budget: cap the in-memory image cache by both count and
+        // decoded size. Images are also written to the disk cache, so dropping
+        // them from RAM only costs a file read on the next view.
+        _imageCache.countLimit = 160;
+        _imageCache.totalCostLimit = 24 * 1024 * 1024;  // ~24 MB of decoded pixels
         _channelAvatarCache = [NSMutableDictionary dictionary];
         _pendingChannelAvatars = [NSMutableDictionary dictionary];
         _pendingNameAvatars = [NSMutableDictionary dictionary];
@@ -1838,6 +1843,15 @@ static id LTPath(id root, id key, ...) {
 
 #pragma mark - Images
 
+// Approximate decoded in-memory footprint of an image (bytes). Used as the
+// NSCache cost so eviction respects real memory, not object count.
+static NSUInteger LTDecodedImageCost(UIImage *image) {
+    if (!image) return 0;
+    CGSize px = CGSizeMake(image.size.width * image.scale, image.size.height * image.scale);
+    NSUInteger bytes = (NSUInteger)(px.width * px.height * 4.0);
+    return bytes ? bytes : 1;
+}
+
 static BOOL LTBorderRowUniform(const UInt8 *px, size_t W, size_t y,
                                size_t x0, size_t x1, const UInt8 *ref) {
     const UInt8 *row = px + y * W * 4;
@@ -1942,7 +1956,7 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
     if (diskImage) {
         LTLog(@"IMG disk-hit url=%@", urlString);
         diskImage = LTTrimmedArtworkImage(diskImage, [urlString rangeOfString:@"i.ytimg.com"].location != NSNotFound);
-        [self.imageCache setObject:diskImage forKey:urlString];
+        [self.imageCache setObject:diskImage forKey:urlString cost:LTDecodedImageCost(diskImage)];
         if (completion) completion(diskImage);
         return;
     }
@@ -1984,7 +1998,7 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
             return;
         }
         image = LTTrimmedArtworkImage(image, [cacheKey rangeOfString:@"i.ytimg.com"].location != NSNotFound);
-        [self.imageCache setObject:image forKey:cacheKey];
+        [self.imageCache setObject:image forKey:cacheKey cost:LTDecodedImageCost(image)];
         NSData *encoded = UIImageJPEGRepresentation(image, 0.85);
         if (encoded) [encoded writeToFile:diskPath atomically:YES];
         // Always call completion on the main thread so UI updates work
@@ -2138,6 +2152,26 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
     for (NSArray *pair in patterns) {
         NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:[pair objectAtIndex:0]
                                                                                options:0 error:nil];
+        [regex replaceMatchesInString:result options:0 range:NSMakeRange(0, result.length)
+                         withTemplate:[pair objectAtIndex:1]];
+    }
+    return result;
+}
+
+// A smaller grade for list rows and strip tiles: a ~60pt cell only needs a
+// ~120–320px image, so pulling w1200 decodes ~16x the pixels for nothing
+// (network time, CPU, and RAM — the big deal on a 512MB device).
+- (NSString *)listThumbnailURL:(NSString *)urlString {
+    if (![urlString isKindOfClass:[NSString class]] || urlString.length < 8) return urlString;
+    // i.ytimg.com paths stay as-is (sddefault is already the disk-cached grade).
+    NSMutableString *result = [urlString mutableCopy];
+    NSArray *patterns = @[
+        @[@"=w\\d+-h\\d+", @"=w320-h320"],
+        @[@"/w\\d+-h\\d+", @"/w320-h320"],
+    ];
+    for (NSArray *pair in patterns) {
+        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:[pair objectAtIndex:0]
+                                                                                options:0 error:nil];
         [regex replaceMatchesInString:result options:0 range:NSMakeRange(0, result.length)
                          withTemplate:[pair objectAtIndex:1]];
     }

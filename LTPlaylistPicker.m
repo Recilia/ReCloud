@@ -34,7 +34,7 @@ static LTPlaylistPicker *activePicker = nil;
     picker.view.frame = host.view.bounds;
     [picker buildPanelWithTitle:panelTitle];
     picker.view.alpha = 0.0f;
-    [UIView animateWithDuration:[LTTransitionSettings durationFor:0.18] animations:^{ picker.view.alpha = 1.0f; }];
+    [LTTransitionSettings animateWithDuration:0.18 animations:^{ picker.view.alpha = 1.0f; }];
 }
 
 - (void)buildPanelWithTitle:(NSString *)title {
@@ -161,7 +161,7 @@ static LTPlaylistPicker *activePicker = nil;
 }
 
 - (void)rowTouchUp:(UIButton *)sender {
-    [UIView animateWithDuration:[LTTransitionSettings durationFor:0.12] animations:^{ sender.backgroundColor = [UIColor clearColor]; }];
+    [LTTransitionSettings animateWithDuration:0.12 animations:^{ sender.backgroundColor = [UIColor clearColor]; }];
 }
 
 - (void)rowTapped:(UIButton *)sender {
@@ -170,7 +170,7 @@ static LTPlaylistPicker *activePicker = nil;
 }
 
 - (void)dismiss {
-    [UIView animateWithDuration:[LTTransitionSettings durationFor:0.15] animations:^{ self.view.alpha = 0.0f; }
+    [LTTransitionSettings animateWithDuration:0.15 animations:^{ self.view.alpha = 0.0f; }
                      completion:^(BOOL finished) {
         [self willMoveToParentViewController:nil];
         [self.view removeFromSuperview];

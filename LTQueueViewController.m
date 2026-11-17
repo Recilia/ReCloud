@@ -151,7 +151,7 @@
 - (void)loadBackgroundArt {
     LTTrack *track = [[LTPlayerController sharedController] currentTrack];
     if (!track || !track.thumbnailURL.length) return;
-    NSString *url = [[LTYouTubeClient sharedClient] highResThumbnailURL:track.thumbnailURL];
+    NSString *url = [[LTYouTubeClient sharedClient] listThumbnailURL:track.thumbnailURL];
     __weak LTQueueViewController *weakSelf = self;
     [[LTYouTubeClient sharedClient] loadImageWithURL:url completion:^(UIImage *image) {
         if (!image) return;

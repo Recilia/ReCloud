@@ -1,6 +1,6 @@
 Package: com.legacymusic.app
 Name: ReinMusic
-Version: 3.1
+Version: 3.2
 Architecture: iphoneos-arm
 Description: YouTube Music client for legacy iOS devices
 Maintainer: Rein <rein@localhost>

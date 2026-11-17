@@ -10,6 +10,7 @@
 #import "LTSongMenu.h"
 #import "LTTableSongMenu.h"
 #import "LTTheme.h"
+#import "LTToast.h"
 #import "LTLog.h"
 #import <QuartzCore/QuartzCore.h>
 
@@ -248,19 +249,7 @@
 
 
 - (void)showToast:(NSString *)text {
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 220, 36)];
-    label.center = CGPointMake(self.view.bounds.size.width / 2.0f, self.view.bounds.size.height - 80);
-    label.backgroundColor = [UIColor colorWithWhite:0 alpha:0.75f];
-    label.textColor = [UIColor whiteColor];
-    label.textAlignment = NSTextAlignmentCenter;
-    label.font = [UIFont systemFontOfSize:13];
-    label.layer.cornerRadius = 6.0f;
-    label.clipsToBounds = YES;
-    label.text = text;
-    [self.view addSubview:label];
-    [UIView animateWithDuration:1.4 delay:1.0 options:UIViewAnimationOptionCurveEaseIn
-                     animations:^{ label.alpha = 0.0f; }
-                     completion:^(BOOL finished) { [label removeFromSuperview]; }];
+    [LTToast showText:text inView:self.view];
 }
 
 - (void)loadContent {
@@ -308,7 +297,7 @@
         self.subtitleLabel.text = [self trackCountText];
     }
     NSString *thumb = self.info[@"thumbnail"];
-    if (thumb.length) thumb = [[LTYouTubeClient sharedClient] highResThumbnailURL:thumb];
+    if (thumb.length) thumb = [[LTYouTubeClient sharedClient] listThumbnailURL:thumb];
     [self setArtworkURL:thumb];
     [self updateDownloadState];
 }

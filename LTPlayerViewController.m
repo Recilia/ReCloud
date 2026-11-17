@@ -10,6 +10,7 @@
 #import "LTTheme.h"
 #import "LTDebugSettings.h"
 #import "LTOneHandedMode.h"
+#import "LTTransitionSettings.h"
 #import "LTLog.h"
 #import "LTSafeArea.h"
 #import "LTSimpleCell.h"
@@ -359,11 +360,9 @@ static BOOL sHasShownSwipeHint = NO;
     // Plain curve-based animation: -animateWithDuration:delay:options: is the
     // only variant that exists on iOS 6, and the spring API would need guarding.
     if (animated) {
-        [UIView animateWithDuration:0.25f
-                              delay:0.0
-                            options:UIViewAnimationOptionCurveEaseOut
-                         animations:^{ drawer.frame = target; }
-                         completion:nil];
+        [LTTransitionSettings animateWithDuration:0.25f animations:^{
+            drawer.frame = target;
+        } completion:nil];
     } else {
         drawer.frame = target;
     }
@@ -585,7 +584,7 @@ static BOOL sHasShownSwipeHint = NO;
                 self.panCommitted = YES;
                 CGFloat dirOff = (self.panSwipeDir > 0) ? 1.0f : -1.0f;
                 CGFloat offX = self.panBaseX * dirOff + self.artworkView.bounds.size.width * dirOff;
-                [UIView animateWithDuration:0.18f animations:^{
+                [LTTransitionSettings animateWithDuration:0.18f animations:^{
                     self.artworkView.center = CGPointMake(self.panBaseX + offX, self.artworkView.center.y);
                     self.artworkView.alpha = 0.0f;
                     self.artworkView.transform = CGAffineTransformMakeScale(0.9f, 0.9f);
@@ -606,7 +605,7 @@ static BOOL sHasShownSwipeHint = NO;
                     [self resetArtworkPresentation];
                 }];
             } else {
-                [UIView animateWithDuration:0.22f animations:^{
+                [LTTransitionSettings animateWithDuration:0.22f animations:^{
                     self.artworkView.center = CGPointMake(self.panBaseX, self.artworkView.center.y);
                     self.artworkView.transform = CGAffineTransformIdentity;
                     self.artworkView.alpha = 1.0f;
@@ -619,7 +618,7 @@ static BOOL sHasShownSwipeHint = NO;
         case UIGestureRecognizerStateCancelled:
         case UIGestureRecognizerStateFailed: {
             self.panning = NO;
-            [UIView animateWithDuration:0.22f animations:^{
+            [LTTransitionSettings animateWithDuration:0.22f animations:^{
                 self.artworkView.center = CGPointMake(self.panBaseX, self.artworkView.center.y);
                 self.artworkView.transform = CGAffineTransformIdentity;
                 self.artworkView.alpha = 1.0f;
@@ -742,14 +741,13 @@ static BOOL sHasShownSwipeHint = NO;
     [self.mainPane insertSubview:self.pressGlow belowSubview:button];
     self.pressGlow.alpha = 0.0f;
     self.pressGlow.hidden = NO;
-    [UIView animateWithDuration:0.08f animations:^{ self.pressGlow.alpha = 1.0f; }];
+    [LTTransitionSettings animateWithDuration:0.08f animations:^{ self.pressGlow.alpha = 1.0f; }];
 }
 
 - (void)transportKeyUp:(UIButton *)button {
     if (!self.pressGlow || self.pressGlow.hidden) return;
-    [UIView animateWithDuration:0.16f
-                     animations:^{ self.pressGlow.alpha = 0.0f; }
-                     completion:^(BOOL finished) { self.pressGlow.hidden = YES; }];
+    [LTTransitionSettings animateWithDuration:0.16f animations:^{ self.pressGlow.alpha = 0.0f; }
+        completion:^(BOOL finished) { self.pressGlow.hidden = YES; }];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -1478,7 +1476,7 @@ static BOOL sHasShownSwipeHint = NO;
     [self layoutControls];
     self.pagesHint.hidden = NO;
     self.pagesHint.alpha = 0.0f;
-    [UIView animateWithDuration:0.35 animations:^{
+    [LTTransitionSettings animateWithDuration:0.35 animations:^{
         self.pagesHint.alpha = 1.0f;
     }];
     [self.swipeHintTimer invalidate];
@@ -1498,7 +1496,7 @@ static BOOL sHasShownSwipeHint = NO;
     UIView *secondary = [self isWidescreen] ? nil : self.artistLabel;
     primary.alpha = 0.0f;
     secondary.alpha = 0.0f;
-    [UIView animateWithDuration:0.35 animations:^{
+    [LTTransitionSettings animateWithDuration:0.35 animations:^{
         self.pagesHint.alpha = 0.0f;
         primary.alpha = 1.0f;
         secondary.alpha = 1.0f;

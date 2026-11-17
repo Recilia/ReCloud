@@ -437,41 +437,67 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
     uint8_t *tmp = (uint8_t *)calloc(w * h * 4, 1);
     int passes = 3;
 
+    // Separable box blur with a sliding running sum: each pixel is added once
+    // and removed once instead of re-summing the (2r+1)-wide window every
+    // time. On the 4S this turns ~19M adds per blur into ~0.4M, taking the
+    // per-track-change blur from tens of ms of CPU to near-instant.
     for (int p = 0; p < passes; p++) {
+        // Horizontal pass: buf -> tmp
         for (size_t y = 0; y < h; y++) {
+            const uint8_t *row = buf + y * w * 4;
+            uint8_t *out = tmp + y * w * 4;
+            int32_t sR = 0, sG = 0, sB = 0, sA = 0;
+            int cnt = 0;
+            for (size_t k = 0; k <= radius && k < w; k++) {
+                size_t i = k * 4;
+                sR += row[i]; sG += row[i+1]; sB += row[i+2]; sA += row[i+3];
+                cnt++;
+            }
             for (size_t x = 0; x < w; x++) {
-                int32_t sR=0, sG=0, sB=0, sA=0;
-                int cnt = 0;
-                for (int d = -(int)radius; d <= (int)radius; d++) {
-                    size_t sx = x + d;
-                    if (sx >= w) continue;
-                    size_t i = (y * w + sx) * 4;
-                    sR += buf[i]; sG += buf[i+1]; sB += buf[i+2]; sA += buf[i+3];
+                size_t i = x * 4;
+                out[i]   = (uint8_t)(sR / cnt);
+                out[i+1] = (uint8_t)(sG / cnt);
+                out[i+2] = (uint8_t)(sB / cnt);
+                out[i+3] = (uint8_t)(sA / cnt);
+                size_t addX = x + radius + 1;
+                if (addX < w) {
+                    size_t j = addX * 4;
+                    sR += row[j]; sG += row[j+1]; sB += row[j+2]; sA += row[j+3];
                     cnt++;
                 }
-                size_t i = (y * w + x) * 4;
-                tmp[i]   = (uint8_t)(sR / cnt);
-                tmp[i+1] = (uint8_t)(sG / cnt);
-                tmp[i+2] = (uint8_t)(sB / cnt);
-                tmp[i+3] = (uint8_t)(sA / cnt);
+                if (x >= radius) {
+                    size_t j = (x - radius) * 4;
+                    sR -= row[j]; sG -= row[j+1]; sB -= row[j+2]; sA -= row[j+3];
+                    cnt--;
+                }
             }
         }
-        for (size_t y = 0; y < h; y++) {
-            for (size_t x = 0; x < w; x++) {
-                int32_t sR=0, sG=0, sB=0, sA=0;
-                int cnt = 0;
-                for (int d = -(int)radius; d <= (int)radius; d++) {
-                    size_t sy = y + d;
-                    if (sy >= h) continue;
-                    size_t i = (sy * w + x) * 4;
-                    sR += tmp[i]; sG += tmp[i+1]; sB += tmp[i+2]; sA += tmp[i+3];
-                    cnt++;
-                }
+        // Vertical pass: tmp -> buf
+        for (size_t x = 0; x < w; x++) {
+            int32_t sR = 0, sG = 0, sB = 0, sA = 0;
+            int cnt = 0;
+            for (size_t k = 0; k <= radius && k < h; k++) {
+                size_t i = (k * w + x) * 4;
+                sR += tmp[i]; sG += tmp[i+1]; sB += tmp[i+2]; sA += tmp[i+3];
+                cnt++;
+            }
+            for (size_t y = 0; y < h; y++) {
                 size_t i = (y * w + x) * 4;
                 buf[i]   = (uint8_t)(sR / cnt);
                 buf[i+1] = (uint8_t)(sG / cnt);
                 buf[i+2] = (uint8_t)(sB / cnt);
                 buf[i+3] = (uint8_t)(sA / cnt);
+                size_t addY = y + radius + 1;
+                if (addY < h) {
+                    size_t j = (addY * w + x) * 4;
+                    sR += tmp[j]; sG += tmp[j+1]; sB += tmp[j+2]; sA += tmp[j+3];
+                    cnt++;
+                }
+                if (y >= radius) {
+                    size_t j = ((y - radius) * w + x) * 4;
+                    sR -= tmp[j]; sG -= tmp[j+1]; sB -= tmp[j+2]; sA -= tmp[j+3];
+                    cnt--;
+                }
             }
         }
     }

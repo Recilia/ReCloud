@@ -80,6 +80,8 @@ extern NSString *const LTBrowserUserAgent;
                         completion:(void (^)(NSDictionary *result, NSError *error))completion;
 
 - (NSString *)highResThumbnailURL:(NSString *)urlString;
+// Smaller grade for list rows / strip tiles (~60pt cells): saves decode + RAM.
+- (NSString *)listThumbnailURL:(NSString *)urlString;
 
 - (NSString *)channelAvatarURL:(NSString *)urlString size:(NSInteger)size;
 

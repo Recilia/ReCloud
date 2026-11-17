@@ -7,6 +7,7 @@
 #import "LTGraphics.h"
 #import "LTLog.h"
 #import "LTSafeArea.h"
+#import "LTTransitionSettings.h"
 #import "LTHaptics.h"
 #import <math.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -310,7 +311,7 @@ typedef NS_ENUM(NSInteger, LTiPodWheelButton) {
     window.rootViewController = newRoot;
     [LTAppDelegate applyDisplayModeAnimated:NO];
 
-    if (snap && animated) {
+    if (snap && animated && [LTTransitionSettings animationsEnabled]) {
         UIImageView *overlay = [[UIImageView alloc] initWithImage:snap];
         overlay.frame = oldView.bounds;
         [window addSubview:overlay];

@@ -1,17 +1,17 @@
 #import "LTTransitionSettings.h"
 
+// Bumped key so the upgrade to 3.2 resets animations to their new OFF
+// default; the pre-3.2 getter stored YES eagerly on first read, so the old
+// key can't tell a user preference from an untouched install.
+static NSString *const LTAnimationsEnabledKey = @"LTAnimationsEnabled.2";
 static NSString *const LTTransitionSpeedKey = @"LTTransitionSpeed";
-static NSString *const LTAnimationsEnabledKey = @"LTAnimationsEnabled";
 
 @implementation LTTransitionSettings
 
 + (BOOL)animationsEnabled {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:LTAnimationsEnabledKey] == nil) {
-        [defaults setBool:YES forKey:LTAnimationsEnabledKey];
-        return YES;
-    }
-    return [defaults boolForKey:LTAnimationsEnabledKey];
+    id stored = [[NSUserDefaults standardUserDefaults] objectForKey:LTAnimationsEnabledKey];
+    if (stored == nil) return NO;  // off by default
+    return [stored boolValue];
 }
 
 + (void)setAnimationsEnabled:(BOOL)enabled {
@@ -35,6 +35,28 @@ static NSString *const LTAnimationsEnabledKey = @"LTAnimationsEnabled";
 
 + (CGFloat)durationFor:(CGFloat)baseDuration {
     return baseDuration / [self speedMultiplier];
+}
+
+#pragma mark - Animation helpers
+
++ (void)animateWithDuration:(CGFloat)duration
+                 animations:(void (^)(void))animations
+                 completion:(void (^)(BOOL finished))completion {
+    if (!animations) return;
+    if (![self animationsEnabled]) {
+        // Disabled: apply the final values directly, skipping the whole
+        // UIView animation pipeline (no CA transaction, no render tree work).
+        animations();
+        if (completion) completion(YES);
+        return;
+    }
+    [UIView animateWithDuration:[self durationFor:duration]
+                          animations:animations
+                          completion:completion];
+}
+
++ (void)animateWithDuration:(CGFloat)duration animations:(void (^)(void))animations {
+    [self animateWithDuration:duration animations:animations completion:nil];
 }
 
 @end
