@@ -398,6 +398,15 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         }
         return;
     }
+    if (alertView.tag == 955) {
+        // Dark / Light / System -> LTThemeMode values 2 / 1 / 0.
+        LTThemeMode mode = (buttonIndex == 1) ? LTThemeModeDark
+                          : (buttonIndex == 2) ? LTThemeModeLight
+                          : LTThemeModeSystem;
+        [LTTheme setMode:mode];
+        [self.tableView reloadData];
+        return;
+    }
     if (alertView.tag == 900 && buttonIndex == 1) {
         [self clearOfflineFiles];
     }
@@ -444,12 +453,21 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     return 6;
 }
 
-// The icon picker is appended after whatever the last appearance row happens to
-// be, so it never shifts the indices of the existing rows.
+// The Theme row and the icon picker are appended after whatever the last
+// appearance row happens to be, so they never shift the indices of the
+// existing rows.
 - (NSInteger)appearanceRowCount {
     NSInteger count = [LTOneHandedMode isSupported] ? 6 : 5;
+    count += 1; // Theme
     if ([LTAppIcon isPickerSupported]) count += 1;
     return count;
+}
+
+// The Theme row sits just before the icon picker (which may be absent).
+- (NSInteger)themeRowIndex {
+    NSInteger row = [self appearanceRowCount] - 1;
+    if ([LTAppIcon isPickerSupported]) row -= 1;
+    return row;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -518,6 +536,11 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             if ([LTAppIcon isPickerSupported] && indexPath.row == [self appearanceRowCount] - 1) {
                 cell.textLabel.text = @"App Icon";
                 cell.detailTextLabel.text = [LTAppIcon currentIconLabel];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            } else if (indexPath.row == [self themeRowIndex]) {
+                cell.textLabel.text = @"Theme";
+                cell.detailTextLabel.text = [LTTheme labelForMode:[LTTheme mode]];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 0) {
@@ -643,6 +666,14 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     if (indexPath.section == LTSettingsSectionAppearance) {
         if ([LTAppIcon isPickerSupported] && indexPath.row == [self appearanceRowCount] - 1) {
             [self presentIconPicker];
+        } else if (indexPath.row == [self themeRowIndex]) {
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Theme"
+                                                            message:@"Dark is the YouTube-style black and red theme. System follows the OS on iOS 13+ and is light on older devices."
+                                                           delegate:self
+                                                  cancelButtonTitle:@"Cancel"
+                                                  otherButtonTitles:@"Dark", @"Light", @"System", nil];
+            alert.tag = 955;
+            [alert show];
         } else if (indexPath.row == 2) {
             LTTransitionSpeedViewController *vc = [[LTTransitionSpeedViewController alloc] init];
             [self.navigationController pushViewController:vc animated:YES];

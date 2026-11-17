@@ -1,6 +1,7 @@
 #import "LTPlaylistSelectViewController.h"
 #import "LTPlaylistStore.h"
 #import "LTSimpleCell.h"
+#import "LTTheme.h"
 
 @interface LTPlaylistSelectViewController ()
 @property (nonatomic, strong) UITableView *tableView;
@@ -32,7 +33,7 @@
         self.edgesForExtendedLayout = UIRectEdgeNone;
     }
     self.title = @"Include Playlists";
-    self.view.backgroundColor = [UIColor colorWithWhite:0.11f alpha:1.0f];
+    self.view.backgroundColor = [LTTheme background];
 
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
@@ -55,8 +56,8 @@
                                                   style:UITableViewStylePlain];
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    self.tableView.backgroundColor = [UIColor colorWithWhite:0.11f alpha:1.0f];
-    self.tableView.separatorColor = [UIColor colorWithWhite:0.25f alpha:1.0f];
+    self.tableView.backgroundColor = [LTTheme background];
+    self.tableView.separatorColor = [LTTheme separator];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.tableView];
 
@@ -96,8 +97,8 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:CellId];
     if (!cell) {
         cell = [[LTSimpleCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:CellId];
-        cell.backgroundColor = [UIColor colorWithWhite:0.15f alpha:1.0f];
-        cell.textLabel.textColor = [UIColor whiteColor];
+        cell.backgroundColor = [LTTheme cellBackground];
+        cell.textLabel.textColor = [LTTheme text];
         cell.detailTextLabel.textColor = [UIColor lightGrayColor];
     }
     LTLocalPlaylist *p = [self.playlists objectAtIndex:indexPath.row];

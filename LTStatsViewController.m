@@ -64,15 +64,15 @@ static NSString *LTFormatDuration(NSTimeInterval seconds) {
     for (NSInteger i = 0; i < 3; i++) {
         CGFloat x = margin + (CGFloat)i * (panelW + gap);
         UIView *card = [[UIView alloc] initWithFrame:CGRectMake(x, 8, panelW, 80)];
-        card.backgroundColor = [UIColor colorWithRed:0.07f green:0.33f blue:0.68f alpha:1.0f];
+        card.backgroundColor = [LTTheme accent];
         card.layer.cornerRadius = 10.0f;
         card.clipsToBounds = YES;
 
         CAGradientLayer *gradient = [CAGradientLayer layer];
         gradient.frame = card.bounds;
         gradient.colors = @[
-            (id)[UIColor colorWithRed:0.05f green:0.48f blue:0.9f alpha:1.0f].CGColor,
-            (id)[UIColor colorWithRed:0.08f green:0.28f blue:0.55f alpha:1.0f].CGColor,
+            (id)[UIColor colorWithRed:0.75f green:0.10f blue:0.10f alpha:1.0f].CGColor,
+            (id)[UIColor colorWithRed:0.45f green:0.05f blue:0.05f alpha:1.0f].CGColor,
         ];
         [card.layer insertSublayer:gradient atIndex:0];
 

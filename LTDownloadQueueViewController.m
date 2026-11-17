@@ -1,6 +1,7 @@
 #import "LTDownloadQueueViewController.h"
 #import "LTPlaylistStore.h"
 #import "LTModel.h"
+#import "LTTheme.h"
 
 @interface LTDownloadQueueViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *tableView;
@@ -16,7 +17,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Download Queue";
-    self.view.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0f];
+    self.view.backgroundColor = [LTTheme background];
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)]) {
         self.edgesForExtendedLayout = UIRectEdgeNone;
     }
@@ -47,20 +48,20 @@
 
 - (void)buildHeader {
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 58)];
-    header.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0f];
+    header.backgroundColor = [LTTheme cellBackground];
 
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 6, self.view.bounds.size.width - 150, 20)];
     self.statusLabel.backgroundColor = [UIColor clearColor];
-    self.statusLabel.textColor = [UIColor whiteColor];
+    self.statusLabel.textColor = [LTTheme text];
     self.statusLabel.font = [UIFont systemFontOfSize:13];
     [header addSubview:self.statusLabel];
 
     self.toggleButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.toggleButton.frame = CGRectMake(self.view.bounds.size.width - 92, 4, 78, 26);
-    self.toggleButton.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0f];
+    self.toggleButton.backgroundColor = [LTTheme fill];
     self.toggleButton.layer.cornerRadius = 5.0f;
     [self.toggleButton setTitle:@"Pause" forState:UIControlStateNormal];
-    [self.toggleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [self.toggleButton setTitleColor:[LTTheme text] forState:UIControlStateNormal];
     self.toggleButton.titleLabel.font = [UIFont systemFontOfSize:13];
     [self.toggleButton addTarget:self action:@selector(toggleTapped:) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:self.toggleButton];
@@ -84,7 +85,7 @@
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorColor = [UIColor colorWithWhite:0.25 alpha:1.0f];
+    self.tableView.separatorColor = [LTTheme separator];
     self.tableView.rowHeight = 46.0f;
     if ([self.tableView respondsToSelector:@selector(setCellLayoutMarginsFollowReadableWidth:)]) {
         self.tableView.cellLayoutMarginsFollowReadableWidth = NO;
@@ -95,7 +96,7 @@
 - (void)buildEmptyLabel {
     self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 90, self.view.bounds.size.width - 40, 60)];
     self.emptyLabel.backgroundColor = [UIColor clearColor];
-    self.emptyLabel.textColor = [UIColor colorWithWhite:0.55 alpha:1.0f];
+    self.emptyLabel.textColor = [LTTheme secondaryText];
     self.emptyLabel.font = [UIFont systemFontOfSize:14];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
     self.emptyLabel.numberOfLines = 2;
@@ -173,9 +174,9 @@
     }
     LTTrack *track = [self.tracks objectAtIndex:(NSUInteger)indexPath.row];
     cell.textLabel.text = track.title;
-    cell.textLabel.textColor = [UIColor whiteColor];
+    cell.textLabel.textColor = [LTTheme text];
     cell.detailTextLabel.text = track.artist;
-    cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0f];
+    cell.detailTextLabel.textColor = [LTTheme secondaryText];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.backgroundColor = [UIColor clearColor];
     cell.accessoryType = UITableViewCellAccessoryNone;

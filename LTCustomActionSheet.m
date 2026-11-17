@@ -1,5 +1,6 @@
 #import "LTCustomActionSheet.h"
 #import "LTTransitionSettings.h"
+#import "LTTheme.h"
 #import "LTLog.h"
 
 @interface LTCustomActionSheet ()
@@ -47,7 +48,7 @@
             if (i == destructiveIndex) {
                 [button setTitleColor:[UIColor colorWithRed:1.0f green:0.35f blue:0.35f alpha:1.0f] forState:UIControlStateNormal];
             } else {
-                [button setTitleColor:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f] forState:UIControlStateNormal];
+                [button setTitleColor:[LTTheme accent] forState:UIControlStateNormal];
             }
             button.backgroundColor = [UIColor colorWithRed:0.20f green:0.20f blue:0.20f alpha:1.0f];
             button.tag = i;

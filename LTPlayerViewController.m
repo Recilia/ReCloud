@@ -7,6 +7,7 @@
 #import "LTYouTubeClient.h"
 #import "LTPlaylistStore.h"
 #import "LTGraphics.h"
+#import "LTTheme.h"
 #import "LTDebugSettings.h"
 #import "LTOneHandedMode.h"
 #import "LTLog.h"
@@ -1273,7 +1274,7 @@ static BOOL sHasShownSwipeHint = NO;
     self.lyricsTitle = [[UILabel alloc] initWithFrame:CGRectZero];
     self.lyricsTitle.text = @"Lyrics";
     self.lyricsTitle.font = [UIFont boldSystemFontOfSize:14];
-    self.lyricsTitle.textColor = [UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f];
+    self.lyricsTitle.textColor = [LTTheme accent];
     self.lyricsTitle.textAlignment = NSTextAlignmentCenter;
     self.lyricsTitle.backgroundColor = [UIColor clearColor];
     [self.statsPane addSubview:self.lyricsTitle];
@@ -1623,7 +1624,7 @@ static BOOL sHasShownSwipeHint = NO;
         CGFloat smallGlyph = pad ? (sb ? 22.0f : 52.0f) : 34.0f;
         CGFloat playGlyph = pad ? (sb ? 40.0f : 84.0f) : 56.0f;
         UIColor *normal = [UIColor blackColor];
-        UIColor *highlighted = [UIColor colorWithRed:0.349f green:0.678f blue:1.0f alpha:1.0f];
+        UIColor *highlighted = [LTTheme accent];
 
         [self.prevButton setImage:[LTGraphics glyphIcon:0xF04A size:prevNextGlyph color:normal] forState:UIControlStateNormal];
         [self.nextButton setImage:[LTGraphics glyphIcon:0xF04E size:prevNextGlyph color:normal] forState:UIControlStateNormal];
@@ -1659,7 +1660,7 @@ static BOOL sHasShownSwipeHint = NO;
     CGFloat transportGlyph = 27.0f;
     CGFloat smallGlyph = 27.0f;
     UIColor *black = [UIColor blackColor];
-    UIColor *blue = [UIColor colorWithRed:0.349f green:0.678f blue:1.0f alpha:1.0f];
+    UIColor *blue = [LTTheme accent];
 
     if ([controller isPlaying]) {
         [self.playButton setImage:[LTGraphics glyphIcon:0xF04C size:transportGlyph color:black] forState:UIControlStateNormal];
@@ -2009,10 +2010,10 @@ static BOOL sHasShownSwipeHint = NO;
     if (idx == controller.currentIndex) {
         cell.imageView.image = [self scaledQueueIcon:[LTGraphics glyphIcon:0xF04B
                                                                       size:20.0f
-                                                                     color:[UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f]]];
+                                                                     color:[LTTheme accent]]];
         cell.imageView.contentMode = UIViewContentModeCenter;
         cell.textLabel.text = track.title;
-        cell.textLabel.textColor = [UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f];
+        cell.textLabel.textColor = [LTTheme accent];
     } else {
         cell.textLabel.text = [NSString stringWithFormat:@"%d. %@", (int)idx + 1, track.title];
         cell.textLabel.textColor = [UIColor whiteColor];

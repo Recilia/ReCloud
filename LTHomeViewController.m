@@ -94,16 +94,23 @@
 
     CAGradientLayer *gradient = [CAGradientLayer layer];
     gradient.frame = banner.bounds;
-    gradient.colors = @[
-        (id)[UIColor colorWithRed:0.06f green:0.22f blue:0.46f alpha:1.0f].CGColor,
-        (id)[UIColor colorWithRed:0.0f green:0.42f blue:0.85f alpha:1.0f].CGColor,
-    ];
+    if ([LTTheme isDark]) {
+        gradient.colors = @[
+            (id)[UIColor colorWithRed:0.16f green:0.03f blue:0.03f alpha:1.0f].CGColor,
+            (id)[UIColor colorWithRed:0.42f green:0.08f blue:0.08f alpha:1.0f].CGColor,
+        ];
+    } else {
+        gradient.colors = @[
+            (id)[UIColor colorWithWhite:0.97f alpha:1.0f].CGColor,
+            (id)[UIColor colorWithWhite:0.90f alpha:1.0f].CGColor,
+        ];
+    }
     [banner.layer insertSublayer:gradient atIndex:0];
 
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 20, width - 32, 30)];
     titleLabel.text = @"Welcome back.";
     titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.textColor = [LTTheme isDark] ? [UIColor whiteColor] : [LTTheme text];
     titleLabel.backgroundColor = [UIColor clearColor];
     self.bannerTitleLabel = titleLabel;
     [banner addSubview:titleLabel];
@@ -111,7 +118,8 @@
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 54, width - 32, 16)];
     subtitleLabel.text = @"";
     subtitleLabel.font = [UIFont systemFontOfSize:13];
-    subtitleLabel.textColor = [UIColor colorWithWhite:1.0f alpha:0.75f];
+    subtitleLabel.textColor = [LTTheme isDark] ? [UIColor colorWithWhite:1.0f alpha:0.75f]
+                                               : [LTTheme secondaryText];
     subtitleLabel.backgroundColor = [UIColor clearColor];
     self.bannerSubtitleLabel = subtitleLabel;
     [banner addSubview:subtitleLabel];
@@ -206,7 +214,9 @@
 - (void)setRefreshItemBusy:(BOOL)busy {
     if (busy) {
         UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
-                                            initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+                                            initWithActivityIndicatorStyle:[LTTheme isDark]
+                                            ? UIActivityIndicatorViewStyleWhite
+                                            : UIActivityIndicatorViewStyleGray];
         spinner.hidesWhenStopped = YES;
         [spinner startAnimating];
         self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:spinner];

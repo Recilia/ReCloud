@@ -12,6 +12,7 @@
 #import "LTiPodViewController.h"
 #import "LTOneHandedMode.h"
 #import "LTAppIcon.h"
+#import "LTTheme.h"
 #import "LTLog.h"
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -42,6 +43,12 @@ static void LTUncaughtExceptionHandler(NSException *e) {
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
+    [LTAppDelegate applyThemeAppearance];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(themeModeDidChange:)
+                                                 name:LTThemeModeDidChangeNotification
+                                               object:nil];
+
     if ([LTiPodViewController isEnabled]) {
         self.window.rootViewController = [[LTiPodViewController alloc] init];
     } else {
@@ -54,6 +61,72 @@ static void LTUncaughtExceptionHandler(NSException *e) {
 
 // The standard tab-bar root, wrapped in the iPad split container when running
 // on iPad. Kept in sync with LTiPodViewController.makeStandardRoot.
+// Colors the global chrome (nav bars, toolbars, tab bar, status bar) for the
+// active theme. Called before the root hierarchy is built and re-applied on
+// every theme change, since UIAppearance only affects newly created views.
++ (void)applyThemeAppearance {
+    BOOL dark = [LTTheme isDark];
+
+    UINavigationBar *navAppearance = [UINavigationBar appearance];
+    if (dark) {
+        navAppearance.barStyle = UIBarStyleBlack;
+        navAppearance.barTintColor = [LTTheme background];
+        navAppearance.tintColor = [LTTheme text];
+    } else {
+        navAppearance.barStyle = UIBarStyleDefault;
+        navAppearance.barTintColor = [UIColor whiteColor];
+        navAppearance.tintColor = [LTTheme accent];
+    }
+
+    UIToolbar *toolbarAppearance = [UIToolbar appearance];
+    toolbarAppearance.barStyle = dark ? UIBarStyleBlack : UIBarStyleDefault;
+    toolbarAppearance.tintColor = dark ? [LTTheme text] : [LTTheme accent];
+
+    UITabBar *tabBarAppearance = [UITabBar appearance];
+    tabBarAppearance.barTintColor = dark ? [LTTheme background] : [UIColor whiteColor];
+    tabBarAppearance.tintColor = [LTTheme accent];
+    if ([tabBarAppearance respondsToSelector:@selector(setTranslucent:)]) {
+        tabBarAppearance.translucent = NO;
+    }
+
+    [[UIApplication sharedApplication] setStatusBarStyle:dark ? UIStatusBarStyleBlackOpaque
+                                                              : UIStatusBarStyleDefault
+                                               animated:NO];
+}
+
+// Rebuild the whole root hierarchy so every view re-runs viewDidLoad with the
+// new palette. This is the only reliable way to re-theme the app on old SDKs,
+// where views bake their colors in at creation time. The selected tab is kept.
+- (void)themeModeDidChange:(NSNotification *)notification {
+    UIViewController *root = self.window.rootViewController;
+    if ([root isKindOfClass:[LTiPodViewController class]]) {
+        // iPod mode owns its own rendering; let it pick up the change itself.
+        return;
+    }
+    LTLog(@"THEME mode changed, rebuilding root");
+    LTTabBarController *oldTab = nil;
+    if ([root isKindOfClass:[LTTabBarController class]]) {
+        oldTab = (LTTabBarController *)root;
+    } else if ([root isKindOfClass:[LTSplitContainerViewController class]]) {
+        oldTab = ((LTSplitContainerViewController *)root).tabController;
+    }
+    NSInteger previousIndex = oldTab ? (NSInteger)oldTab.selectedIndex : 0;
+
+    [LTAppDelegate applyThemeAppearance];
+    UIViewController *newRoot = [LTAppDelegate standardRootViewController];
+    self.window.rootViewController = newRoot;
+    LTTabBarController *newTab = nil;
+    if ([newRoot isKindOfClass:[LTTabBarController class]]) {
+        newTab = (LTTabBarController *)newRoot;
+    } else if ([newRoot isKindOfClass:[LTSplitContainerViewController class]]) {
+        newTab = ((LTSplitContainerViewController *)newRoot).tabController;
+    }
+    if (newTab && previousIndex >= 0 && previousIndex < (NSInteger)newTab.viewControllers.count) {
+        newTab.selectedIndex = previousIndex;
+    }
+    [LTAppDelegate applyDisplayModeAnimated:NO];
+}
+
 + (UIViewController *)standardRootViewController {    LTTabBarController *tabBar = [LTAppDelegate makeTabBarController];
     if ([LTSplitContainerViewController isSupported]) {
         return [[LTSplitContainerViewController alloc] initWithTabController:tabBar];

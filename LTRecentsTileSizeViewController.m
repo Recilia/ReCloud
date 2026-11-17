@@ -1,5 +1,6 @@
 #import "LTRecentsTileSizeViewController.h"
 #import "LTHomeViewController.h"
+#import "LTTheme.h"
 
 @interface LTRecentsTileSizeViewController ()
 @property (nonatomic, strong) UILabel *valueLabel;
@@ -16,7 +17,7 @@
         self.edgesForExtendedLayout = UIRectEdgeNone;
     }
     self.title = @"Recents Tile Size";
-    self.view.backgroundColor = [UIColor colorWithWhite:0.15f alpha:1.0f];
+    self.view.backgroundColor = [LTTheme groupedBackground];
 
     CGFloat width = self.view.bounds.size.width;
     CGFloat pad = 20.0f;
@@ -33,7 +34,7 @@
     self.valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(pad, 70, width - pad * 2, 30)];
     self.valueLabel.text = [self currentSizeText];
     self.valueLabel.font = [UIFont boldSystemFontOfSize:22];
-    self.valueLabel.textColor = [UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f];
+    self.valueLabel.textColor = [LTTheme accent];
     self.valueLabel.backgroundColor = [UIColor clearColor];
     self.valueLabel.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.valueLabel];
@@ -48,7 +49,7 @@
     self.smallLabel = [[UILabel alloc] initWithFrame:CGRectMake(pad, 158, width / 2.0f - pad, 20)];
     self.smallLabel.text = @"Small";
     self.smallLabel.font = [UIFont systemFontOfSize:14];
-    self.smallLabel.textColor = [UIColor whiteColor];
+    self.smallLabel.textColor = [LTTheme secondaryText];
     self.smallLabel.backgroundColor = [UIColor clearColor];
     self.smallLabel.textAlignment = NSTextAlignmentLeft;
     [self.view addSubview:self.smallLabel];
@@ -56,7 +57,7 @@
     self.largeLabel = [[UILabel alloc] initWithFrame:CGRectMake(width / 2.0f, 158, width / 2.0f - pad, 20)];
     self.largeLabel.text = @"Large";
     self.largeLabel.font = [UIFont systemFontOfSize:14];
-    self.largeLabel.textColor = [UIColor whiteColor];
+    self.largeLabel.textColor = [LTTheme secondaryText];
     self.largeLabel.backgroundColor = [UIColor clearColor];
     self.largeLabel.textAlignment = NSTextAlignmentRight;
     [self.view addSubview:self.largeLabel];

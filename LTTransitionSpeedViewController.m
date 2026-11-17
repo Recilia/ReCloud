@@ -1,5 +1,6 @@
 #import "LTTransitionSpeedViewController.h"
 #import "LTTransitionSettings.h"
+#import "LTTheme.h"
 
 @interface LTTransitionSpeedViewController ()
 @property (nonatomic, strong) UILabel *valueLabel;
@@ -16,7 +17,7 @@
         self.edgesForExtendedLayout = UIRectEdgeNone;
     }
     self.title = @"Transition Speed";
-    self.view.backgroundColor = [UIColor colorWithWhite:0.15f alpha:1.0f];
+    self.view.backgroundColor = [LTTheme groupedBackground];
 
     CGFloat width = self.view.bounds.size.width;
     CGFloat pad = 20.0f;
@@ -35,7 +36,7 @@
     self.valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(pad, 70, width - pad * 2, 30)];
     self.valueLabel.text = [NSString stringWithFormat:@"%.1fx", [LTTransitionSettings speedMultiplier]];
     self.valueLabel.font = [UIFont boldSystemFontOfSize:22];
-    self.valueLabel.textColor = [UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f];
+    self.valueLabel.textColor = [LTTheme accent];
     self.valueLabel.backgroundColor = [UIColor clearColor];
     self.valueLabel.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.valueLabel];
@@ -51,7 +52,7 @@
     self.fastLabel = [[UILabel alloc] initWithFrame:CGRectMake(pad, 158, width / 2.0f - pad, 20)];
     self.fastLabel.text = @"Slower";
     self.fastLabel.font = [UIFont systemFontOfSize:14];
-    self.fastLabel.textColor = [UIColor whiteColor];
+    self.fastLabel.textColor = [LTTheme secondaryText];
     self.fastLabel.backgroundColor = [UIColor clearColor];
     self.fastLabel.textAlignment = NSTextAlignmentLeft;
     [self.view addSubview:self.fastLabel];
@@ -59,7 +60,7 @@
     self.slowLabel = [[UILabel alloc] initWithFrame:CGRectMake(width / 2.0f, 158, width / 2.0f - pad, 20)];
     self.slowLabel.text = @"Faster";
     self.slowLabel.font = [UIFont systemFontOfSize:14];
-    self.slowLabel.textColor = [UIColor whiteColor];
+    self.slowLabel.textColor = [LTTheme secondaryText];
     self.slowLabel.backgroundColor = [UIColor clearColor];
     self.slowLabel.textAlignment = NSTextAlignmentRight;
     [self.view addSubview:self.slowLabel];

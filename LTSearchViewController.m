@@ -11,6 +11,7 @@
 #import "LTLocalPlaylistDetailViewController.h"
 #import "LTSpinnerView.h"
 #import "LTGraphics.h"
+#import "LTLucideIcons.h"
 #import "LTSimpleCell.h"
 #import "LTTheme.h"
 #import "LTLog.h"
@@ -445,8 +446,10 @@
 
 - (void)showSpinner:(BOOL)show {
     if (show) {
+        UIActivityIndicatorViewStyle style = [LTTheme isDark] ? UIActivityIndicatorViewStyleWhite
+                                                              : UIActivityIndicatorViewStyleGray;
         UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
-                                            initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+                                            initWithActivityIndicatorStyle:style];
         spinner.hidesWhenStopped = YES;
         [spinner startAnimating];
         self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:spinner];
@@ -699,7 +702,7 @@
         cell.textLabel.textAlignment = NSTextAlignmentLeft;
         cell.textLabel.text = [history objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.textColor = [LTTheme text];
-        cell.imageView.image = [LTGraphics searchIcon];
+        cell.imageView.image = [LTLucideIcons iconNamed:@"search" size:22.0f color:[LTTheme secondaryText]];
         cell.accessoryView = nil;
         return cell;
     }

@@ -1,5 +1,6 @@
 #import "LTPlaylistPicker.h"
 #import "LTTransitionSettings.h"
+#import "LTTheme.h"
 #import "LTLog.h"
 #import "LTSafeArea.h"
 #import <objc/runtime.h>
@@ -139,8 +140,7 @@ static LTPlaylistPicker *activePicker = nil;
     row.titleEdgeInsets = UIEdgeInsetsMake(0, 16, 0, 16);
     row.titleLabel.font = [UIFont systemFontOfSize:15];
     row.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    [row setTitleColor:(accent ? [UIColor colorWithRed:0.35f green:0.65f blue:1.0f alpha:1.0f]
-                               : [UIColor whiteColor])
+    [row setTitleColor:(accent ? [LTTheme accent] : [UIColor whiteColor])
               forState:UIControlStateNormal];
     [row setTitle:title forState:UIControlStateNormal];
     [row addTarget:self action:@selector(rowTouchDown:) forControlEvents:UIControlEventTouchDown];

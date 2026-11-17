@@ -1,5 +1,6 @@
 #import "LTGraphics.h"
 #import "LTLucideIcons.h"
+#import "LTTheme.h"
 #import <CoreText/CoreText.h>
 
 @implementation LTGraphics
@@ -194,12 +195,12 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)playIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"play" size:30.0f color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"play" size:30.0f color:[LTTheme accent]];
     if (lucide) return lucide;
-    UIImage *glyph = [self coloredGlyphIcon:0xF04B color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *glyph = [self coloredGlyphIcon:0xF04B color:[LTTheme accent]];
     if (glyph) return glyph;
     return [self iconWithDrawing:^(CGContextRef ctx) {
-        [[UIColor blueColor] setFill];
+        [[LTTheme accent] setFill];
         UIBezierPath *tri = [UIBezierPath bezierPath];
         [tri moveToPoint:CGPointMake(9, 6)];
         [tri addLineToPoint:CGPointMake(24, 15)];
@@ -210,12 +211,12 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)shuffleIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"shuffle" size:30.0f color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"shuffle" size:30.0f color:[LTTheme accent]];
     if (lucide) return lucide;
-    UIImage *glyph = [self coloredGlyphIcon:0xF074 color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *glyph = [self coloredGlyphIcon:0xF074 color:[LTTheme accent]];
     if (glyph) return glyph;
     return [self iconWithDrawing:^(CGContextRef ctx) {
-        [[UIColor blueColor] setStroke];
+        [[LTTheme accent] setStroke];
         UIBezierPath *p = [UIBezierPath bezierPath];
         [p moveToPoint:CGPointMake(5, 7)];
         [p addLineToPoint:CGPointMake(12, 7)];
@@ -224,12 +225,12 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)downloadIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"download" size:30.0f color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"download" size:30.0f color:[LTTheme accent]];
     if (lucide) return lucide;
-    UIImage *glyph = [self coloredGlyphIcon:0xF019 color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *glyph = [self coloredGlyphIcon:0xF019 color:[LTTheme accent]];
     if (glyph) return glyph;
     return [self iconWithDrawing:^(CGContextRef ctx) {
-        [[UIColor blueColor] setStroke];
+        [[LTTheme accent] setStroke];
         UIBezierPath *arrow = [UIBezierPath bezierPath];
         [arrow moveToPoint:CGPointMake(15, 5)];
         [arrow addLineToPoint:CGPointMake(15, 19)];
@@ -265,12 +266,12 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)renameIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"pen" size:30.0f color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"pen" size:30.0f color:[LTTheme accent]];
     if (lucide) return lucide;
-    UIImage *glyph = [self coloredGlyphIcon:0xF303 color:[UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f]];
+    UIImage *glyph = [self coloredGlyphIcon:0xF303 color:[LTTheme accent]];
     if (glyph) return glyph;
     return [self iconWithDrawing:^(CGContextRef ctx) {
-        [[UIColor blueColor] setStroke];
+        [[LTTheme accent] setStroke];
         UIBezierPath *pencil = [UIBezierPath bezierPath];
         [pencil moveToPoint:CGPointMake(6, 24)];
         [pencil addLineToPoint:CGPointMake(8, 17)];
@@ -283,7 +284,7 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)homeIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"house" size:30.0f color:[UIColor whiteColor]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"house" size:30.0f color:[LTTheme tabIcon]];
     if (lucide) return lucide;
     UIImage *glyph = [self glyphIcon:0xF015];
     if (glyph) return glyph;
@@ -300,7 +301,7 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)searchIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"search" size:30.0f color:[UIColor whiteColor]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"search" size:30.0f color:[LTTheme tabIcon]];
     if (lucide) return lucide;
     UIImage *glyph = [self glyphIcon:0xF002];
     if (glyph) return glyph;
@@ -319,7 +320,7 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)popularIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"trending-up" size:30.0f color:[UIColor whiteColor]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"trending-up" size:30.0f color:[LTTheme tabIcon]];
     if (lucide) return lucide;
     UIImage *glyph = [self glyphIcon:0xF06D];
     if (glyph) return glyph;
@@ -342,7 +343,7 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)settingsIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"settings" size:30.0f color:[UIColor whiteColor]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"settings" size:30.0f color:[LTTheme tabIcon]];
     if (lucide) return lucide;
     UIImage *glyph = [self glyphIcon:0xF013];
     if (glyph) return glyph;
@@ -373,7 +374,7 @@ static NSString *LTLucideNameForFAGlyph(unichar glyph) {
 }
 
 + (UIImage *)libraryIcon {
-    UIImage *lucide = [LTLucideIcons iconNamed:@"library" size:30.0f color:[UIColor whiteColor]];
+    UIImage *lucide = [LTLucideIcons iconNamed:@"library" size:30.0f color:[LTTheme tabIcon]];
     if (lucide) return lucide;
     UIImage *glyph = [self glyphIcon:0xF5FD];
     if (glyph) return glyph;

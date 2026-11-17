@@ -4,6 +4,7 @@
 #import "LTGraphics.h"
 #import "LTLog.h"
 #import "LTSimpleCell.h"
+#import "LTTheme.h"
 #import "LTTableSongMenu.h"
 
 @interface LTQueueViewController () <UITableViewDataSource, UITableViewDelegate>
@@ -193,10 +194,10 @@
     if (idx == controller.currentIndex) {
         cell.imageView.image = [self scaledIcon:[LTGraphics glyphIcon:0xF04B
                                                                 size:20.0f
-                                                               color:[UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f]]];
+                                                               color:[LTTheme accent]]];
         cell.imageView.contentMode = UIViewContentModeCenter;
         cell.textLabel.text = track.title;
-        cell.textLabel.textColor = [UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f];
+        cell.textLabel.textColor = [LTTheme accent];
     } else {
         cell.imageView.image = nil;
         cell.textLabel.text = [NSString stringWithFormat:@"%d. %@", (int)idx + 1, track.title];

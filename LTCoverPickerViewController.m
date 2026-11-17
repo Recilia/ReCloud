@@ -1,4 +1,5 @@
 #import "LTCoverPickerViewController.h"
+#import "LTTheme.h"
 #import "LTLog.h"
 #import <AssetsLibrary/AssetsLibrary.h>
 
@@ -38,7 +39,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Albums";
-    self.view.backgroundColor = [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f];
+    self.view.backgroundColor = [LTTheme background];
 
     UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithTitle:@"Cancel"
                                                                style:UIBarButtonItemStylePlain
@@ -46,7 +47,7 @@
                                                               action:@selector(cancelTapped:)];
     self.navigationItem.rightBarButtonItem = cancel;
 
-    self.tableView.separatorColor = [UIColor colorWithWhite:0.25f alpha:1.0f];
+    self.tableView.separatorColor = [LTTheme separator];
     self.tableView.rowHeight = 56.0f;
 
     self.library = [[ALAssetsLibrary alloc] init];
@@ -55,7 +56,7 @@
 }
 
 - (UIStatusBarStyle)preferredStatusBarStyle {
-    return UIStatusBarStyleLightContent;
+        return [LTTheme isDark] ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
 - (void)loadAlbums {
@@ -93,13 +94,13 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kCellIdentifier];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:kCellIdentifier];
-        cell.backgroundColor = [UIColor colorWithRed:0.15f green:0.15f blue:0.15f alpha:1.0f];
-        cell.textLabel.textColor = [UIColor whiteColor];
+        cell.backgroundColor = [LTTheme cellBackground];
+        cell.textLabel.textColor = [LTTheme text];
         cell.detailTextLabel.textColor = [UIColor grayColor];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleGray;
         UIView *bg = [[UIView alloc] init];
-        bg.backgroundColor = [UIColor colorWithRed:0.25f green:0.25f blue:0.25f alpha:1.0f];
+        bg.backgroundColor = [LTTheme fill];
         cell.selectedBackgroundView = bg;
     }
     LTAlbumEntry *entry = [self.albums objectAtIndex:(NSUInteger)indexPath.row];
@@ -138,7 +139,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f];
+    self.view.backgroundColor = [LTTheme background];
 
     UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithTitle:@"Cancel"
                                                                style:UIBarButtonItemStylePlain
@@ -161,7 +162,7 @@
 }
 
 - (UIStatusBarStyle)preferredStatusBarStyle {
-    return UIStatusBarStyleLightContent;
+    return [LTTheme isDark] ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
 - (void)loadPhotos {
@@ -255,11 +256,12 @@
     LTCoverPickerAlbumList *albumList = [[LTCoverPickerAlbumList alloc] initWithStyle:UITableViewStylePlain];
     albumList.delegate = delegate;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:albumList];
-    nav.navigationBar.barStyle = UIBarStyleBlack;
+    BOOL dark = [LTTheme isDark];
+    nav.navigationBar.barStyle = dark ? UIBarStyleBlack : UIBarStyleDefault;
     nav.navigationBar.translucent = NO;
-    nav.navigationBar.barTintColor = [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f];
-    nav.navigationBar.tintColor = [UIColor colorWithRed:0.35f green:0.68f blue:0.88f alpha:1.0f];
-    nav.navigationBar.titleTextAttributes = @{UITextAttributeTextColor: [UIColor whiteColor]};
+    nav.navigationBar.barTintColor = [LTTheme background];
+    nav.navigationBar.tintColor = dark ? [LTTheme text] : [LTTheme accent];
+    nav.navigationBar.titleTextAttributes = @{UITextAttributeTextColor: [LTTheme text]};
     [viewController presentViewController:nav animated:YES completion:nil];
 }
 

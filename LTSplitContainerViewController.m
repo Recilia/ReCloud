@@ -1,6 +1,7 @@
 #import "LTSplitContainerViewController.h"
 #import "LTTabBarController.h"
 #import "LTGraphics.h"
+#import "LTTheme.h"
 #import "LTSafeArea.h"
 #import "LTPlaylistStore.h"
 #import "LTYouTubeClient.h"
@@ -193,7 +194,7 @@ typedef NS_ENUM(NSInteger, LTSidebarMode) {
 #pragma mark - Sidebar
 
 - (UIColor *)accentColor {
-    return [UIColor colorWithRed:0.35f green:0.68f blue:1.0f alpha:1.0f];
+    return [LTTheme accent];
 }
 
 - (void)buildSidebar {
