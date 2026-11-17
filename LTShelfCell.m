@@ -2,6 +2,30 @@
 #import "LTYouTubeClient.h"
 #import "LTTheme.h"
 
+#pragma mark - Horizontal-only strip scroll view
+
+// The strip cells live inside the (vertical) table view, so the inner
+// scroll view's pan recognizer must only begin for horizontal movement:
+// once it begins it blocks the table's pan, which is what made a
+// press-and-hold on a tile freeze vertical scrolling. Letting the inner
+// pan fail for vertical drags hands the touch back to the table, whose pan
+// then cancels the tile button's touch (canCancelContentTouches) and
+// scrolls the page. A plain horizontal drag still scrolls the strip.
+@interface LTStripScrollView : UIScrollView
+@end
+
+@implementation LTStripScrollView
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if (gestureRecognizer == self.panGestureRecognizer) {
+        CGPoint velocity = [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:self];
+        if (fabs(velocity.y) > fabs(velocity.x)) return NO;
+    }
+    return [super gestureRecognizerShouldBegin:gestureRecognizer];
+}
+
+@end
+
 #pragma mark - Recently played horizontal strip
 
 @implementation LTHomeRecentsCell {
@@ -34,11 +58,13 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
+        _scrollView = [[LTStripScrollView alloc] initWithFrame:CGRectZero];
         _scrollView.showsHorizontalScrollIndicator = NO;
         _scrollView.showsVerticalScrollIndicator = NO;
         _scrollView.directionalLockEnabled = YES;
         _scrollView.bounces = NO;
+        _scrollView.delaysContentTouches = NO;
+        _scrollView.canCancelContentTouches = YES;
         if ([_scrollView respondsToSelector:@selector(setAlwaysBounceVertical:)]) {
             _scrollView.alwaysBounceVertical = NO;
         }
@@ -133,11 +159,13 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
+        _scrollView = [[LTStripScrollView alloc] initWithFrame:CGRectZero];
         _scrollView.showsHorizontalScrollIndicator = NO;
         _scrollView.showsVerticalScrollIndicator = NO;
         _scrollView.directionalLockEnabled = YES;
         _scrollView.bounces = NO;
+        _scrollView.delaysContentTouches = NO;
+        _scrollView.canCancelContentTouches = YES;
         if ([_scrollView respondsToSelector:@selector(setAlwaysBounceVertical:)]) {
             _scrollView.alwaysBounceVertical = NO;
         }
@@ -264,10 +292,12 @@ const CGFloat kHomeTileArtRatio = 104.0f / 116.0f;
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [LTTheme background];
-        _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
+        _scrollView = [[LTStripScrollView alloc] initWithFrame:CGRectZero];
         _scrollView.showsHorizontalScrollIndicator = NO;
         _scrollView.showsVerticalScrollIndicator = NO;
         _scrollView.alwaysBounceHorizontal = YES;
+        _scrollView.delaysContentTouches = NO;
+        _scrollView.canCancelContentTouches = YES;
         _scrollView.backgroundColor = [LTTheme background];
         _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [self.contentView addSubview:_scrollView];

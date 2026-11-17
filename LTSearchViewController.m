@@ -36,8 +36,6 @@
 @property (nonatomic, assign) BOOL showingHistory;
 // Idle state (no query): recommendation content mirroring the Home screen.
 @property (nonatomic, strong) NSArray *idleChips;
-@property (nonatomic, strong) NSArray *trendingTracks;
-@property (nonatomic, assign) BOOL trendingLoading;
 @property (nonatomic, strong) NSArray *idleShelves;  // @{"title","items"}
 @end
 
@@ -269,30 +267,12 @@
     }
     self.emptyLabel.hidden = YES;
     [self.tableView reloadData];
-    [self loadTrendingIfNeeded];
     [self loadIdleShelvesIfNeeded];
 }
 
-// Trending strip shown in the idle state, fetched once per session.
-- (void)loadTrendingIfNeeded {
-    if (self.trendingTracks.count || self.trendingLoading) return;
-    self.trendingLoading = YES;
-    __weak LTSearchViewController *weakSelf = self;
-    [[LTYouTubeClient sharedClient] fetchTrendingSongsWithCompletion:^(NSArray *tracks, NSError *error) {
-        LTSearchViewController *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf.trendingLoading = NO;
-        if (error) {
-            LTLog(@"SEARCH trending error %@", error);
-        } else if (tracks.count) {
-            strongSelf.trendingTracks = tracks;
-        }
-        if (strongSelf.showingHistory) [strongSelf.tableView reloadData];
-    }];
-}
-
 // "Recommended for you" shelves, shared with Home via LTPersonalShelves
-// (cached per seed set, so switching tabs refetches nothing).
+// (cached per seed set, so switching tabs refetches nothing). Built purely
+// from the listening history — no country/geo-based content here.
 - (void)loadIdleShelvesIfNeeded {
     if (self.idleShelves.count) return;
     __weak LTSearchViewController *weakSelf = self;
@@ -312,7 +292,6 @@
     NSMutableArray *kinds = [NSMutableArray array];
     [kinds addObject:@"chips"];
     if ([[[LTPlaylistStore sharedStore] searchHistory] count]) [kinds addObject:@"history"];
-    if (self.trendingTracks.count) [kinds addObject:@"trending"];
     for (NSUInteger i = 0; i < self.idleShelves.count; i++) {
         [kinds addObject:[NSString stringWithFormat:@"shelf%d", (int)i]];
     }
@@ -604,7 +583,7 @@
     if ([self isPlaylistsMode]) return (NSInteger)self.results.count;
     if (self.showingHistory) {
         NSString *kind = [self idleKindForSection:section];
-        if ([kind isEqualToString:@"chips"] || [kind isEqualToString:@"trending"]) return 1;
+        if ([kind isEqualToString:@"chips"]) return 1;
         if ([kind isEqualToString:@"history"]) {
             return (NSInteger)[[[LTPlaylistStore sharedStore] searchHistory] count];
         }
@@ -620,7 +599,6 @@
     if (self.showingHistory) {
         NSString *kind = [self idleKindForSection:section];
         if ([kind isEqualToString:@"history"]) return @"Recent Searches";
-        if ([kind isEqualToString:@"trending"]) return @"Trending";
         NSDictionary *shelf = [self shelfForSection:section];
         return [shelf objectForKey:@"title"];
     }
@@ -663,11 +641,9 @@
             return cell;
         }
 
-        if ([kind isEqualToString:@"trending"] || [kind hasPrefix:@"shelf"]) {
+        if ([kind hasPrefix:@"shelf"]) {
             NSDictionary *shelf = [self shelfForSection:indexPath.section];
             NSArray *items = shelf ? [shelf objectForKey:@"items"] : nil;
-            BOOL isTrending = [kind isEqualToString:@"trending"];
-            if (!items && isTrending) items = self.trendingTracks;
 
             static NSString *StripCellId = @"LTSearchStripCell";
             LTHomeShelfCell *cell = [tableView dequeueReusableCellWithIdentifier:StripCellId];
@@ -678,9 +654,7 @@
             cell.onTrackTapped = ^(LTTrack *track) {
                 LTSearchViewController *strongSelf = weakSelf;
                 if (!strongSelf) return;
-                [strongSelf playTrack:track
-                            fromItems:items
-                           sourceName:isTrending ? @"Trending" : @"Recommended"];
+                [strongSelf playTrack:track fromItems:items sourceName:@"Recommended"];
             };
             cell.onBrowseTapped = ^(LTBrowseItem *item) {
                 LTSearchViewController *strongSelf = weakSelf;

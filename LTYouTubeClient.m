@@ -762,7 +762,10 @@ static id LTPath(id root, id key, ...) {
     return nil;
 }
 
-// The user's YouTube Music library playlists (grid).
+// The user's YouTube Music library playlists (grid). YouTube Music answers
+// this browse either as a grid of musicTwoRowItemRenderer tiles or as a
+// shelf of musicResponsiveListItemRenderer rows depending on the account's
+// layout, so both are parsed and merged.
 - (void)fetchLibraryPlaylistsWithCompletion:(void (^)(NSArray *items, NSError *error))completion {
     if (![[LTAuth sharedAuth] signedIn]) {
         if (completion) completion(nil, [self errorWithCode:5 message:@"Not signed in"]);
@@ -781,6 +784,9 @@ static id LTPath(id root, id key, ...) {
             return;
         }
         NSMutableArray *items = [NSMutableArray array];
+        NSMutableSet *seen = [NSMutableSet set];
+
+        // Grid layout: playlist tiles with a VL/PL browse id.
         [strongSelf enumerateRenderersIn:json key:@"musicTwoRowItemRenderer" block:^(NSDictionary *it) {
             NSString *browseId = LTPath(it, @"navigationEndpoint", @"browseEndpoint", @"browseId", nil);
             if (![browseId isKindOfClass:[NSString class]]) return;
@@ -796,8 +802,40 @@ static id LTPath(id root, id key, ...) {
             bi.subtitle = [strongSelf textFromRuns:[it objectForKey:@"subtitle"][@"runs"]];
             NSArray *thumbs = LTPath(it, @"thumbnailRenderer", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
             bi.thumbnailURL = [strongSelf largestThumbnailURLFromArray:thumbs];
+            [seen addObject:[browseId hasPrefix:@"VL"] ? [browseId substringFromIndex:2] : browseId];
             [items addObject:bi];
         }];
+
+        // Shelf layout: responsive list rows (title in the first flex
+        // column, playlist id on the watch/browse endpoint).
+        [strongSelf enumerateRenderersIn:json key:@"musicResponsiveListItemRenderer" block:^(NSDictionary *it) {
+            NSString *playlistId = LTPath(it, @"navigationEndpoint", @"watchPlaylistEndpoint", @"playlistId", nil);
+            if (![playlistId isKindOfClass:[NSString class]]) {
+                playlistId = LTPath(it, @"navigationEndpoint", @"browseEndpoint", @"browseId", nil);
+            }
+            if (![playlistId isKindOfClass:[NSString class]]) return;
+            if (![playlistId hasPrefix:@"VL"] && ![playlistId hasPrefix:@"PL"]) return;
+            // Dedupe on the bare id so a playlist found by both layouts
+            // (and by either VL-prefixed or bare form) appears once.
+            NSString *dedupeKey = [playlistId hasPrefix:@"VL"] ? [playlistId substringFromIndex:2] : playlistId;
+            if (dedupeKey.length < 3 || [seen containsObject:dedupeKey]) return;
+            NSArray *flexColumns = [it objectForKey:@"flexColumns"];
+            if (![flexColumns isKindOfClass:[NSArray class]] || !flexColumns.count) return;
+            NSString *title = [strongSelf textFromRuns:[[strongSelf runsFromFlexColumn:[flexColumns objectAtIndex:0]] copy]];
+            if (!title.length) return;
+            LTBrowseItem *bi = [[LTBrowseItem alloc] init];
+            bi.kind = LTBrowseKindPlaylist;
+            bi.browseId = playlistId;
+            bi.title = title;
+            if (flexColumns.count > 1) {
+                bi.subtitle = [strongSelf textFromRuns:[strongSelf runsFromFlexColumn:[flexColumns objectAtIndex:1]]];
+            }
+            NSArray *thumbs = LTPath(it, @"thumbnail", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
+            bi.thumbnailURL = [strongSelf largestThumbnailURLFromArray:thumbs];
+            [seen addObject:dedupeKey];
+            [items addObject:bi];
+        }];
+
         if (completion) completion(items, nil);
     }];
 }
