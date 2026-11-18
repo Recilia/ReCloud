@@ -4,7 +4,7 @@
 // — the user taps "Check for Updates" in Settings, and only then does the app
 // contact GitHub.
 //
-// Flow: GET /repos/Recilia/ReinMusic/releases/latest -> compare tag_name with
+// Flow: GET /repos/Recilia/ReCloud/releases/latest -> compare tag_name with
 // the running CFBundleVersion -> if newer, pick the asset that matches this
 // install (rootful .deb on jailbroken devices, otherwise the .ipa that fits
 // the CPU) and download it into the app's Documents folder. Installing is
