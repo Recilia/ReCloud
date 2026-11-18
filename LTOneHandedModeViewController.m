@@ -58,6 +58,7 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:CellId];
         cell.textLabel.font = [UIFont systemFontOfSize:16];
     }
+    [LTTheme styleCell:cell];
     LTOneHandedCorner mode = (LTOneHandedCorner)indexPath.row;
     cell.textLabel.textColor = [LTTheme text];
     cell.textLabel.text = [LTOneHandedMode labelForMode:mode];

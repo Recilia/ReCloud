@@ -1,6 +1,7 @@
 #import "LTDebugMenuViewController.h"
 #import "LTAppDelegate.h"
 #import "LTDebugSettings.h"
+#import "LTTheme.h"
 
 typedef NS_ENUM(NSInteger, LTDebugSection) {
     LTDebugSectionDisplay = 0,
@@ -20,7 +21,7 @@ typedef NS_ENUM(NSInteger, LTDebugSection) {
         self.edgesForExtendedLayout = UIRectEdgeNone;
     }
     self.title = @"Debug";
-    self.view.backgroundColor = [UIColor groupTableViewBackgroundColor];
+    self.view.backgroundColor = [LTTheme groupedBackground];
 
     CGRect bounds = self.view.bounds;
     self.tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 0, bounds.size.width, bounds.size.height)
@@ -28,6 +29,7 @@ typedef NS_ENUM(NSInteger, LTDebugSection) {
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [LTTheme styleTableView:self.tableView grouped:YES];
     [self.view addSubview:self.tableView];
 }
 
@@ -113,7 +115,8 @@ typedef NS_ENUM(NSInteger, LTDebugSection) {
     cell.accessoryView = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    cell.textLabel.textColor = [UIColor blackColor];
+    [LTTheme styleCell:cell];
+    cell.textLabel.textColor = [LTTheme text];
     if (indexPath.section == LTDebugSectionDisplay && indexPath.row == 0) {
         cell.textLabel.text = @"Force Non-Widescreen Mode";
         cell.accessoryView = [self nonWideSwitch];

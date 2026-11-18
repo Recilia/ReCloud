@@ -96,7 +96,7 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:kCellIdentifier];
         cell.backgroundColor = [LTTheme cellBackground];
         cell.textLabel.textColor = [LTTheme text];
-        cell.detailTextLabel.textColor = [UIColor grayColor];
+        cell.detailTextLabel.textColor = [LTTheme secondaryText];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleGray;
         UIView *bg = [[UIView alloc] init];

@@ -151,9 +151,10 @@
         cell = [[LTMediaCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:CellId];
         cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
-        cell.detailTextLabel.textColor = [UIColor grayColor];
+        cell.detailTextLabel.textColor = [LTTheme secondaryText];
         cell.accessoryType = UITableViewCellAccessoryNone;
     }
+    [LTTheme styleCell:cell];
     LTTrack *track = [self.tracks objectAtIndex:(NSUInteger)indexPath.row];
     cell.textLabel.text = track.title;
     NSMutableString *detail = [NSMutableString string];

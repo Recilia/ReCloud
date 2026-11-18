@@ -470,6 +470,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
             cell.detailTextLabel.textColor = [LTTheme secondaryText];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
+        [LTTheme styleCell:cell];
         cell.imageView.image = nil;
         cell.accessibilityIdentifier = nil;
         if (self.accountLoading) {
@@ -515,9 +516,10 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
             cell = [[LTMediaCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:TrackCellId];
             cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
             cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
-            cell.detailTextLabel.textColor = [UIColor grayColor];
+            cell.detailTextLabel.textColor = [LTTheme secondaryText];
             cell.accessoryType = UITableViewCellAccessoryNone;
         }
+        [LTTheme styleCell:cell];
         LTTrack *track = item;
         cell.textLabel.text = track.title;
         NSMutableString *detail = [NSMutableString string];
@@ -541,9 +543,10 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
         cell = [[LTSimpleCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:BucketCellId];
         cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
-        cell.detailTextLabel.textColor = [UIColor grayColor];
+        cell.detailTextLabel.textColor = [LTTheme secondaryText];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
+    [LTTheme styleCell:cell];
     cell.imageView.image = nil;
 
     if ([item isKindOfClass:[LTLocalPlaylist class]]) {

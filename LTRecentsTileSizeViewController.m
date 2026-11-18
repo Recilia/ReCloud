@@ -25,7 +25,7 @@
     UILabel *desc = [[UILabel alloc] initWithFrame:CGRectMake(pad, 20, width - pad * 2, 40)];
     desc.text = @"Controls how large the Recently Played tiles appear on the Home tab.";
     desc.font = [UIFont systemFontOfSize:14];
-    desc.textColor = [UIColor lightGrayColor];
+    desc.textColor = [LTTheme secondaryText];
     desc.backgroundColor = [UIColor clearColor];
     desc.numberOfLines = 0;
     desc.textAlignment = NSTextAlignmentCenter;

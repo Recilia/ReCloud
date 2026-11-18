@@ -448,6 +448,7 @@
         cell.detailTextLabel.textColor = [LTTheme secondaryText];
         cell.accessoryType = UITableViewCellAccessoryNone;
     }
+    [LTTheme styleCell:cell];
     LTTrack *track = [self.playlist.tracks objectAtIndex:(NSUInteger)indexPath.row];
     cell.textLabel.text = [NSString stringWithFormat:@"%d. %@", (int)indexPath.row + 1, track.title];
 

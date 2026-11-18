@@ -47,7 +47,7 @@
     // Footer summary label under the table.
     self.footerLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, top + 8, bounds.size.width - 40, 40)];
     self.footerLabel.font = [UIFont systemFontOfSize:13];
-    self.footerLabel.textColor = [UIColor lightGrayColor];
+    self.footerLabel.textColor = [LTTheme secondaryText];
     self.footerLabel.numberOfLines = 0;
     self.footerLabel.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.footerLabel];
@@ -99,7 +99,7 @@
         cell = [[LTSimpleCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:CellId];
         cell.backgroundColor = [LTTheme cellBackground];
         cell.textLabel.textColor = [LTTheme text];
-        cell.detailTextLabel.textColor = [UIColor lightGrayColor];
+        cell.detailTextLabel.textColor = [LTTheme secondaryText];
     }
     LTLocalPlaylist *p = [self.playlists objectAtIndex:indexPath.row];
     cell.textLabel.text = p.name ?: @"Untitled";

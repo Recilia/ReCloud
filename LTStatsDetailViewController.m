@@ -91,6 +91,7 @@ static NSString *LTDetailFormatDuration(NSTimeInterval seconds) {
             cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
             cell.detailTextLabel.textColor = [LTTheme secondaryText];
         }
+        [LTTheme styleCell:cell];
         LTStatsEntry *entry = [_tracks objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.text = entry.title.length ? entry.title : @"Unknown Song";
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%d plays  •  %@",
@@ -112,6 +113,7 @@ static NSString *LTDetailFormatDuration(NSTimeInterval seconds) {
             cell.detailTextLabel.textColor = [LTTheme secondaryText];
             cell.imageView.image = nil;
         }
+        [LTTheme styleCell:cell];
         NSDictionary *row = [_artists objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.text = [row objectForKey:@"name"];
         NSTimeInterval seconds = [[row objectForKey:@"seconds"] doubleValue];

@@ -441,6 +441,7 @@
             cell.detailTextLabel.textColor = [LTTheme secondaryText];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
+        [LTTheme styleCell:cell];
         LTLocalPlaylist *playlist = [self.playlists objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.text = playlist.name;
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%d tracks", (int)playlist.tracks.count];

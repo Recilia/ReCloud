@@ -147,7 +147,7 @@ typedef NS_ENUM(NSInteger, LTSidebarMode) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor blackColor];
+    self.view.backgroundColor = [LTTheme background];
 
     [self addChildViewController:self.tabController];
     [self.view addSubview:self.tabController.view];

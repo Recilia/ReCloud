@@ -534,6 +534,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     cell.accessoryView = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    [LTTheme styleCell:cell];
     cell.textLabel.textColor = [LTTheme text];
 
     switch (indexPath.section) {

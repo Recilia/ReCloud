@@ -113,4 +113,17 @@ static NSString * const kLTThemeMode = @"LTThemeMode";
                          : [UIColor colorWithWhite:0.35f alpha:1.0f];
 }
 
++ (void)styleCell:(UITableViewCell *)cell {
+    if (!cell) return;
+    cell.backgroundColor = [self cellBackground];
+    cell.textLabel.textColor = [self text];
+    cell.detailTextLabel.textColor = [self secondaryText];
+}
+
++ (void)styleTableView:(UITableView *)tableView grouped:(BOOL)grouped {
+    if (!tableView) return;
+    tableView.backgroundColor = grouped ? [self groupedBackground] : [self background];
+    tableView.separatorColor = [self separator];
+}
+
 @end

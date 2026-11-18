@@ -90,9 +90,15 @@ static void LTUncaughtExceptionHandler(NSException *e) {
         tabBarAppearance.translucent = NO;
     }
 
-    [[UIApplication sharedApplication] setStatusBarStyle:dark ? UIStatusBarStyleBlackOpaque
-                                                              : UIStatusBarStyleDefault
-                                               animated:NO];
+    // UIStatusBarStyleBlackOpaque is the iOS 6 "light text" value; iOS 7+
+    // needs UIStatusBarStyleLightContent or the clock stays black on the
+    // near-black navigation bar.
+    BOOL modernStatusBar = [UIDevice currentDevice].systemVersion.intValue >= 7;
+    UIStatusBarStyle statusStyle = UIStatusBarStyleDefault;
+    if (dark) {
+        statusStyle = modernStatusBar ? UIStatusBarStyleLightContent : UIStatusBarStyleBlackOpaque;
+    }
+    [[UIApplication sharedApplication] setStatusBarStyle:statusStyle animated:NO];
 }
 
 // Rebuild the whole root hierarchy so every view re-runs viewDidLoad with the

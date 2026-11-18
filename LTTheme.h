@@ -41,4 +41,13 @@ extern NSString * const LTThemeModeDidChangeNotification;
 + (UIColor *)accent;             // YouTube red; buttons, active tab, highlights
 + (UIColor *)tabIcon;            // unselected tab bar icons
 
+// Applies the active palette to a standard table cell: opaque background,
+// primary/detail label colors. Call it right after dequeue/creation; rows may
+// override individual label colors afterwards. Without this UIKit keeps the
+// cell white (its default) while the labels go near-white in dark mode.
++ (void)styleCell:(UITableViewCell *)cell;
+
+// Same for a table view: background plus separator tint.
++ (void)styleTableView:(UITableView *)tableView grouped:(BOOL)grouped;
+
 @end

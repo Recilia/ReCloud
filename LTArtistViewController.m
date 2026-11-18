@@ -133,6 +133,7 @@
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
         cell.detailTextLabel.textColor = [LTTheme secondaryText];
     }
+    [LTTheme styleCell:cell];
     if (isSongs) {
         LTTrack *track = [self.topSongs objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.text = track.title;

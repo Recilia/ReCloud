@@ -73,6 +73,7 @@
         self.searchBar.showsCancelButton = YES;
         self.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
         self.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        [self themeSearchBar];
         [self.view addSubview:self.searchBar];
 
         NSArray *types = @[@"songs", @"videos", @"albums", @"artists"];
@@ -168,7 +169,20 @@
     self.view.backgroundColor = [LTTheme background];
     self.tableView.backgroundColor = [LTTheme background];
     self.emptyLabel.textColor = [LTTheme secondaryText];
+    [self themeSearchBar];
     [self.tableView reloadData];
+}
+
+// The search bar is UIKit chrome, so it keeps its light bar unless told
+// otherwise. Black bar style on dark; the field inside stays system-drawn.
+- (void)themeSearchBar {
+    if (!self.searchBar) return;
+    BOOL dark = [LTTheme isDark];
+    self.searchBar.barStyle = dark ? UIBarStyleBlack : UIBarStyleDefault;
+    if ([self.searchBar respondsToSelector:@selector(setBarTintColor:)]) {
+        self.searchBar.barTintColor = dark ? [LTTheme background] : [UIColor whiteColor];
+    }
+    self.searchBar.tintColor = [LTTheme accent];
 }
 
 - (BOOL)isPlaylistsMode {
@@ -676,6 +690,7 @@
             cell.textLabel.font = [UIFont systemFontOfSize:15];
             cell.textLabel.textColor = [LTTheme text];
         }
+        [LTTheme styleCell:cell];
         cell.textLabel.textAlignment = NSTextAlignmentLeft;
         cell.textLabel.text = [history objectAtIndex:(NSUInteger)indexPath.row];
         cell.textLabel.textColor = [LTTheme text];
@@ -692,6 +707,7 @@
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
         cell.detailTextLabel.textColor = [LTTheme secondaryText];
     }
+    [LTTheme styleCell:cell];
     if ([self hasLocalSection] && indexPath.section == 0 && !self.localResults.count) {
         cell.textLabel.text = @"No matches in your library";
         cell.textLabel.textColor = [LTTheme secondaryText];
