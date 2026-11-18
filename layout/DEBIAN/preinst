@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stop the running app before its bundle is replaced. iOS otherwise keeps the
+# old executable mapped and tapping the icon resumes the old 4.x process.
+command -v killall >/dev/null 2>&1 && killall -9 ReinMusic >/dev/null 2>&1
+exit 0

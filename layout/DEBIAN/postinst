@@ -1,0 +1,17 @@
+#!/bin/sh
+# Refresh LaunchServices so SpringBoard picks up the newly unpacked bundle.
+if command -v uicache >/dev/null 2>&1; then
+    uicache -a >/dev/null 2>&1 || uicache >/dev/null 2>&1
+fi
+
+# Installing over SSH (without Cydia/Sileo) leaves a suspended app running and
+# the icon cache stale. Both are handled above. A second copy installed from an
+# IPA keeps its own icon and would still launch the older build, so point it out.
+for p in /var/mobile/Applications/*/ReinMusic.app \
+         /var/mobile/Containers/Bundle/Application/*/ReinMusic.app; do
+    if [ -d "$p" ]; then
+        echo "Re:Cloud: another copy is installed at $p (from an IPA)."
+        echo "Re:Cloud: if the icon still opens an old version, remove that copy with your IPA installer."
+    fi
+done
+exit 0
