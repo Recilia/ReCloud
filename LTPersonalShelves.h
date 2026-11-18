@@ -24,4 +24,9 @@
 // Drops the cache so the next build refetches every mix (Home refresh).
 + (void)invalidate;
 
+// YES while a cached build exists (possibly stale). Callers use this to
+// decide whether to rebuild on their own — Home/Search only rebuild when
+// this is NO (nothing cached) or after -invalidate (the refresh button).
++ (BOOL)hasCachedShelves;
+
 @end

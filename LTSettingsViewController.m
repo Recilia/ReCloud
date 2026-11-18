@@ -14,13 +14,15 @@
 #import "LTHomeViewController.h"
 #import "LTDebugMenuViewController.h"
 #import "LTiPodViewController.h"
+#import "LTUpdater.h"
 #import "LTAuth.h"
 #import "LTSignInViewController.h"
 #import "LTTheme.h"
 #import "LTLog.h"
 
 typedef NS_ENUM(NSInteger, LTSettingsSection) {
-    LTSettingsSectionAccount = 0,
+    LTSettingsSectionUpdates = 0,
+    LTSettingsSectionAccount,
     LTSettingsSectionPlayback,
     LTSettingsSectionAppearance,
     LTSettingsSectionData,
@@ -38,6 +40,13 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 @property (nonatomic, strong) UIAlertView *progressAlert;
 @property (nonatomic, assign) BOOL refreshingMetadata;
 @property (nonatomic, assign) NSInteger versionTapCount;
+// Updater state (manual checks only — see LTUpdater).
+@property (nonatomic, assign) BOOL checkingUpdate;
+@property (nonatomic, assign) BOOL downloadingUpdate;
+@property (nonatomic, assign) BOOL updateChecked;
+@property (nonatomic, strong) NSDictionary *updateRelease;
+@property (nonatomic, copy) NSString *updateVersion;
+@property (nonatomic, copy) NSString *downloadedUpdatePath;
 @end
 
 @implementation LTSettingsViewController
@@ -423,6 +432,23 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     if (alertView.tag == 904 && buttonIndex == 1) {
         [[LTAuth sharedAuth] signOut];
     }
+    if (alertView.tag == 966 && buttonIndex == 1) {
+        [self downloadUpdate];
+        return;
+    }
+    if (alertView.tag == 967 && buttonIndex == 1) {
+        if (![LTUpdater openDownloadedFileInFilza:self.downloadedUpdatePath]) {
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Filza Not Found"
+                                                            message:[NSString stringWithFormat:
+                                        @"The update is saved at:\n%@\n\nInstall it with Filza or your package manager.",
+                                        self.downloadedUpdatePath]
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+        }
+        return;
+    }
 }
 
 - (NSString *)speedLabel {
@@ -450,7 +476,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 #pragma mark - UITableViewDataSource
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 6;
+    return 7;
 }
 
 // The Theme row and the icon picker are appended after whatever the last
@@ -472,6 +498,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     switch (section) {
+        case LTSettingsSectionUpdates: return @"Updates";
         case LTSettingsSectionAccount: return @"Account";
         case LTSettingsSectionPlayback: return @"Playback options";
         case LTSettingsSectionAppearance: return @"Appearance options";
@@ -484,6 +511,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
+        case LTSettingsSectionUpdates: return 1;
         case LTSettingsSectionAccount: return 1;
         case LTSettingsSectionPlayback: return 2;
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
@@ -506,6 +534,45 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     cell.textLabel.textColor = [LTTheme text];
 
     switch (indexPath.section) {
+        case LTSettingsSectionUpdates: {
+            // Manual updater: shows the running version, then either the
+            // available update or the result of the last check.
+            cell.textLabel.textColor = [LTTheme text];
+            if (self.checkingUpdate) {
+                cell.textLabel.text = @"Checking for Updates…";
+                UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+                                                    initWithActivityIndicatorStyle:[LTTheme isDark]
+                                                    ? UIActivityIndicatorViewStyleWhite
+                                                    : UIActivityIndicatorViewStyleGray];
+                [spinner startAnimating];
+                cell.accessoryView = spinner;
+            } else if (self.downloadingUpdate) {
+                cell.textLabel.text = @"Downloading Update…";
+                UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+                                                    initWithActivityIndicatorStyle:[LTTheme isDark]
+                                                    ? UIActivityIndicatorViewStyleWhite
+                                                    : UIActivityIndicatorViewStyleGray];
+                [spinner startAnimating];
+                cell.accessoryView = spinner;
+            } else if (self.downloadedUpdatePath.length) {
+                cell.textLabel.text = [NSString stringWithFormat:@"Install %@", self.updateVersion ?: @"Update"];
+                cell.textLabel.textColor = [LTTheme accent];
+                cell.detailTextLabel.text = @"Open in Filza";
+            } else if (self.updateRelease && self.updateVersion.length) {
+                cell.textLabel.text = [NSString stringWithFormat:@"Download %@", self.updateVersion];
+                cell.textLabel.textColor = [LTTheme accent];
+                cell.detailTextLabel.text = @"Update available";
+            } else {
+                cell.textLabel.text = @"Check for Updates";
+                cell.detailTextLabel.text = self.updateChecked
+                    ? [NSString stringWithFormat:@"Up to date (%@)", [LTUpdater currentVersion]]
+                    : [NSString stringWithFormat:@"v%@", [LTUpdater currentVersion]];
+            }
+            cell.detailTextLabel.textColor = [LTTheme secondaryText];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            break;
+        }
         case LTSettingsSectionAccount: {
             if ([[LTAuth sharedAuth] signedIn]) {
                 NSString *name = [[LTAuth sharedAuth] accountName];
@@ -646,10 +713,131 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     return cell;
 }
 
+#pragma mark - Updater (manual only)
+
+// One row, three states: check → download → hand off to Filza. Nothing here
+// runs automatically; GitHub is only contacted after an explicit tap.
+- (void)handleUpdateRowTap {
+    if (self.checkingUpdate || self.downloadingUpdate) return;
+
+    if (self.downloadedUpdatePath.length) {
+        if (![LTUpdater openDownloadedFileInFilza:self.downloadedUpdatePath]) {
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Update Downloaded"
+                                                            message:[NSString stringWithFormat:
+                                @"Saved to:\n%@\n\nOpen it with Filza (installer) or your package manager to update.",
+                                self.downloadedUpdatePath]
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+        }
+        return;
+    }
+
+    if (self.updateRelease && self.updateVersion.length) {
+        [self downloadUpdate];
+        return;
+    }
+
+    [self checkForUpdates];
+}
+
+- (void)checkForUpdates {
+    self.checkingUpdate = YES;
+    self.updateChecked = NO;
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                  withRowAnimation:UITableViewRowAnimationNone];
+
+    __weak LTSettingsViewController *weakSelf = self;
+    [LTUpdater checkForUpdateWithCompletion:^(NSDictionary *release, NSString *latestVersion, NSError *error) {
+        LTSettingsViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.checkingUpdate = NO;
+        strongSelf.updateChecked = YES;
+        if (error) {
+            [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                             withRowAnimation:UITableViewRowAnimationNone];
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Couldn't Check"
+                                                            message:error.localizedDescription ?: @"GitHub is unreachable right now."
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+            return;
+        }
+        if ([LTUpdater isReleaseNewer:release] && [LTUpdater assetForRelease:release]) {
+            strongSelf.updateRelease = release;
+            strongSelf.updateVersion = latestVersion;
+            [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                             withRowAnimation:UITableViewRowAnimationNone];
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:
+                                      [NSString stringWithFormat:@"Update %@ available", latestVersion]
+                                                            message:@"Download it now? The file is saved to the app's Documents folder."
+                                                           delegate:self
+                                                  cancelButtonTitle:@"Not Now"
+                                                  otherButtonTitles:@"Download", nil];
+            alert.tag = 966;
+            [alert show];
+        } else {
+            strongSelf.updateRelease = nil;
+            strongSelf.updateVersion = nil;
+            [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                             withRowAnimation:UITableViewRowAnimationNone];
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Up to Date"
+                                                            message:[NSString stringWithFormat:
+                                        @"You're on the latest version (%@).", [LTUpdater currentVersion]]
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+        }
+    }];
+}
+
+- (void)downloadUpdate {
+    NSDictionary *asset = [LTUpdater assetForRelease:self.updateRelease];
+    if (!asset) return;
+    self.downloadingUpdate = YES;
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                  withRowAnimation:UITableViewRowAnimationNone];
+
+    __weak LTSettingsViewController *weakSelf = self;
+    [LTUpdater downloadAsset:asset completion:^(NSString *path, NSError *error) {
+        LTSettingsViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.downloadingUpdate = NO;
+        if (path.length) {
+            strongSelf.downloadedUpdatePath = path;
+            [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                             withRowAnimation:UITableViewRowAnimationNone];
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Update Downloaded"
+                                                            message:@"Open it with Filza to install, or find it in the app's Documents folder."
+                                                           delegate:self
+                                                  cancelButtonTitle:@"Later"
+                                                  otherButtonTitles:@"Open in Filza", nil];
+            alert.tag = 967;
+            [alert show];
+        } else {
+            [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                             withRowAnimation:UITableViewRowAnimationNone];
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Download Failed"
+                                                            message:error.localizedDescription ?: @"Try again in a moment."
+                                                           delegate:nil
+                                                  cancelButtonTitle:@"OK"
+                                                  otherButtonTitles:nil];
+            [alert show];
+        }
+    }];
+}
+
 #pragma mark - UITableViewDelegate
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == LTSettingsSectionUpdates) {
+        [self handleUpdateRowTap];
+        return;
+    }
     if (indexPath.section == LTSettingsSectionAbout && indexPath.row == 1) {
         [self handleVersionTap];
         return;

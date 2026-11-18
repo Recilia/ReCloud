@@ -9,7 +9,6 @@ extern NSString *const LTBrowserUserAgent;
 
 + (instancetype)sharedClient;
 
-@property (nonatomic, copy) NSString *visitorData;
 
 // Populated when a stream format is successfully selected by
 // streamURLForVideo:completion:. Keys: videoId, clientName, itag,
@@ -38,13 +37,11 @@ extern NSString *const LTBrowserUserAgent;
 - (void)resolveArtistAvatarForName:(NSString *)name
                         completion:(void (^)(NSString *avatarURL))completion;
 
-- (void)fetchTrendingSongsWithCompletion:(void (^)(NSArray *tracks, NSError *error))completion;
 
 // Authenticated (Google account) content. Returns nil shelves/errors when
 // not signed in — callers should check LTAuth first.
 // Home shelves: NSArray of @{@"title": NSString, @"items": NSArray} where
 // items are LTTrack or LTBrowseItem.
-- (void)fetchHomeRecommendationsWithCompletion:(void (^)(NSArray *shelves, NSError *error))completion;
 
 // Library playlists as LTBrowseItem (kind Playlist).
 - (void)fetchLibraryPlaylistsWithCompletion:(void (^)(NSArray *items, NSError *error))completion;

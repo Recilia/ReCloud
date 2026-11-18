@@ -111,18 +111,8 @@ static id LTPath(id root, id key, ...) {
             if (completion) completion(nil, parseError);
             return;
         }
-        [self ingestVisitorData:obj];
         if (completion) completion(obj, nil);
     }];
-}
-
-- (void)ingestVisitorData:(id)json {
-    if (![json isKindOfClass:[NSDictionary class]]) return;
-    id vd = LTPath(json, @"responseContext", @"visitorData", nil);
-    if ([vd isKindOfClass:[NSString class]] && [(NSString *)vd length]) {
-        NSString *decoded = [(NSString *)vd stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-        if (decoded.length) self.visitorData = decoded;
-    }
 }
 
 #pragma mark - Contexts
@@ -132,7 +122,6 @@ static id LTPath(id root, id key, ...) {
         @"client": @{
             @"clientName": @"WEB_REMIX",
             @"clientVersion": @"1.20250721.00.00",
-            @"gl": @"US",
             @"hl": @"en",
         }
     };
@@ -142,7 +131,6 @@ static id LTPath(id root, id key, ...) {
     NSMutableDictionary *client = [NSMutableDictionary dictionaryWithDictionary:@{
         @"clientName": @"ANDROID_VR",
         @"clientVersion": @"1.65.10",
-        @"gl": @"US",
         @"hl": @"en",
         @"deviceMake": @"Oculus",
         @"deviceModel": @"Quest 3",
@@ -151,9 +139,6 @@ static id LTPath(id root, id key, ...) {
         @"osVersion": @"12L",
         @"userAgent": @"com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
     }];
-    if (self.visitorData.length) {
-        [client setObject:self.visitorData forKey:@"visitorData"];
-    }
     return @{@"client": client};
 }
 
@@ -161,7 +146,6 @@ static id LTPath(id root, id key, ...) {
     NSMutableDictionary *client = [NSMutableDictionary dictionaryWithDictionary:@{
         @"clientName": @"IOS",
         @"clientVersion": @"21.26.4",
-        @"gl": @"US",
         @"hl": @"en",
         @"deviceMake": @"Apple",
         @"deviceModel": @"iPhone16,2",
@@ -169,9 +153,6 @@ static id LTPath(id root, id key, ...) {
         @"osVersion": @"18.3.2.22D82",
         @"userAgent": @"com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
     }];
-    if (self.visitorData.length) {
-        [client setObject:self.visitorData forKey:@"visitorData"];
-    }
     return @{@"client": client};
 }
 
@@ -179,16 +160,12 @@ static id LTPath(id root, id key, ...) {
     NSMutableDictionary *client = [NSMutableDictionary dictionaryWithDictionary:@{
         @"clientName": @"ANDROID",
         @"clientVersion": @"21.26.364",
-        @"gl": @"US",
         @"hl": @"en",
         @"androidSdkVersion": @30,
         @"osName": @"Android",
         @"osVersion": @"11",
         @"userAgent": @"com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip",
     }];
-    if (self.visitorData.length) {
-        [client setObject:self.visitorData forKey:@"visitorData"];
-    }
     return @{@"client": client};
 }
 
@@ -197,16 +174,12 @@ static id LTPath(id root, id key, ...) {
     NSMutableDictionary *client = [NSMutableDictionary dictionaryWithDictionary:@{
         @"clientName": @"ANDROID_MUSIC",
         @"clientVersion": @"7.21.50",
-        @"gl": @"US",
         @"hl": @"en",
         @"androidSdkVersion": @30,
         @"osName": @"Android",
         @"osVersion": @"11",
         @"userAgent": @"com.google.android.apps.youtube.music/7.21.50 (Linux; U; Android 11) gzip",
     }];
-    if (self.visitorData.length) {
-        [client setObject:self.visitorData forKey:@"visitorData"];
-    }
     return @{@"client": client};
 }
 
@@ -301,7 +274,6 @@ static id LTPath(id root, id key, ...) {
         @"client": @{
             @"clientName": @"WEB",
             @"clientVersion": @"2.20241112.00.00",
-            @"gl": @"US",
             @"hl": @"en",
         }
     };
@@ -594,177 +566,6 @@ static id LTPath(id root, id key, ...) {
         return result;
     }
     return urlString;
-}
-
-#pragma mark - Trending
-
-- (void)fetchTrendingSongsWithCompletion:(void (^)(NSArray *tracks, NSError *error))completion {
-    NSDictionary *body = @{@"context": [self webRemixContext], @"browseId": @"FEmusic_charts"};
-    __weak LTYouTubeClient *weakSelf = self;
-    [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
-        LTYouTubeClient *strongSelf = weakSelf;
-        if (!strongSelf) {
-            if (completion) completion(nil, error);
-            return;
-        }
-        if (error || !json) {
-            if (completion) completion(nil, error);
-            return;
-        }
-        NSString *trendingId = [strongSelf trendingPlaylistIdFromCharts:json];
-        if (!trendingId.length) {
-            if (completion) completion(nil, [strongSelf errorWithCode:4 message:@"No trending chart found"]);
-            return;
-        }
-        NSDictionary *playlistBody = @{@"context": [strongSelf webRemixContext], @"browseId": trendingId};
-        [strongSelf postToHost:@"music.youtube.com" path:@"browse" body:playlistBody completion:^(id playlistJson, NSError *playlistError) {
-            if (playlistError || !playlistJson) {
-                if (completion) completion(nil, playlistError);
-                return;
-            }
-            NSArray *tracks = [strongSelf tracksFromPlaylistShelf:playlistJson];
-            if (completion) completion(tracks, nil);
-        }];
-    }];
-}
-
-- (NSString *)trendingPlaylistIdFromCharts:(NSDictionary *)json {
-    __block NSString *trending = nil;
-    __block NSString *fallback = nil;
-    [self enumerateRenderersIn:json key:@"musicTwoRowItemRenderer" block:^(NSDictionary *renderer) {
-        NSString *title = [self textFromRuns:[renderer objectForKey:@"title"][@"runs"]];
-        NSString *browseId = LTPath(renderer, @"navigationEndpoint", @"browseEndpoint", @"browseId", nil);
-        if (![browseId isKindOfClass:[NSString class]] || !browseId.length) return;
-        if (!fallback && [browseId hasPrefix:@"VL"]) fallback = browseId;
-        if (!trending && [title rangeOfString:@"Trending"].location != NSNotFound) trending = browseId;
-    }];
-    if (trending.length) return trending;
-    return fallback ?: @"";
-}
-
-#pragma mark - Account (authenticated)
-
-// Home shelves: "Listen again", "Mixed for you", "New releases", ...
-- (void)fetchHomeRecommendationsWithCompletion:(void (^)(NSArray *shelves, NSError *error))completion {
-    if (![[LTAuth sharedAuth] signedIn]) {
-        if (completion) completion(nil, [self errorWithCode:5 message:@"Not signed in"]);
-        return;
-    }
-    NSDictionary *body = @{@"context": [self webRemixContext], @"browseId": @"FEmusic_home"};
-    __weak LTYouTubeClient *weakSelf = self;
-    [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
-        LTYouTubeClient *strongSelf = weakSelf;
-        if (!strongSelf) {
-            if (completion) completion(nil, error);
-            return;
-        }
-        if (error || !json) {
-            if (completion) completion(nil, error);
-            return;
-        }
-        if (completion) completion([strongSelf homeShelvesFromResponse:json], nil);
-    }];
-}
-
-- (NSArray *)homeShelvesFromResponse:(NSDictionary *)json {
-    NSMutableArray *shelves = [NSMutableArray array];
-    [self enumerateRenderersIn:json key:@"musicCarouselShelfRenderer" block:^(NSDictionary *car) {
-        NSString *title = [self textFromRuns:LTPath(car, @"header", @"musicCarouselShelfBasicHeaderRenderer", @"title", @"runs", nil)];
-        if (!title.length) return;
-        id contents = [car objectForKey:@"contents"];
-        if (![contents isKindOfClass:[NSArray class]] || [(NSArray *)contents count] == 0) return;
-        NSMutableArray *items = [NSMutableArray array];
-        for (id row in contents) {
-            if (![row isKindOfClass:[NSDictionary class]]) continue;
-            NSDictionary *it = [row objectForKey:@"musicTwoRowItemRenderer"];
-            if (!it) continue;
-            id parsed = [self itemFromTwoRowRenderer:it];
-            if (parsed) [items addObject:parsed];
-            if (items.count >= 12) break;
-        }
-        if (items.count) {
-            [shelves addObject:@{ @"title": title, @"items": items }];
-        }
-    }];
-    // Some layouts (e.g. Quick picks) use a plain music shelf instead.
-    [self enumerateRenderersIn:json key:@"musicShelfRenderer" block:^(NSDictionary *shelf) {
-        NSString *title = [self textFromRuns:[shelf objectForKey:@"title"][@"runs"]] ?: @"Quick picks";
-        id contents = [shelf objectForKey:@"contents"];
-        if (![contents isKindOfClass:[NSArray class]] || [(NSArray *)contents count] == 0) return;
-        NSMutableArray *items = [NSMutableArray array];
-        for (id row in contents) {
-            if (![row isKindOfClass:[NSDictionary class]]) continue;
-            NSDictionary *it = [row objectForKey:@"musicResponsiveListItemRenderer"];
-            if (!it) continue;
-            LTTrack *track = [self trackFromItem:it];
-            if (track) [items addObject:track];
-            if (items.count >= 12) break;
-        }
-        if (items.count) {
-            [shelves addObject:@{ @"title": title, @"items": items }];
-        }
-    }];
-    return shelves;
-}
-
-// A home carousel entry can be a track, an album, an artist page, a saved
-// playlist, or a mix/radio (RD... ids).
-- (id)itemFromTwoRowRenderer:(NSDictionary *)it {
-    NSDictionary *nav = LTPath(it, @"navigationEndpoint", nil);
-    if (![nav isKindOfClass:[NSDictionary class]]) return nil;
-
-    NSString *title = [self textFromRuns:[it objectForKey:@"title"][@"runs"]];
-    if (!title.length) return nil;
-
-    id thumbObj = LTPath(it, @"thumbnailRenderer", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
-    NSString *thumbnail = nil;
-    if ([thumbObj isKindOfClass:[NSString class]]) {
-        thumbnail = thumbObj;
-    } else if ([thumbObj isKindOfClass:[NSArray class]]) {
-        thumbnail = [self largestThumbnailURLFromArray:thumbObj];
-    }
-
-    NSDictionary *watch = [nav objectForKey:@"watchEndpoint"];
-    if (watch) {
-        NSString *playlistId = [watch objectForKey:@"playlistId"];
-        if ([playlistId isKindOfClass:[NSString class]] && [(NSString *)playlistId hasPrefix:@"RD"]) {
-            // Mix / radio rotation — presented as a playlist.
-            LTBrowseItem *bi = [[LTBrowseItem alloc] init];
-            bi.kind = LTBrowseKindPlaylist;
-            bi.browseId = playlistId;
-            bi.title = title;
-            bi.subtitle = [self textFromRuns:[it objectForKey:@"subtitle"][@"runs"]];
-            bi.thumbnailURL = thumbnail;
-            return bi;
-        }
-        NSString *videoId = [watch objectForKey:@"videoId"];
-        if (videoId.length) {
-            LTTrack *track = [[LTTrack alloc] init];
-            track.title = title;
-            track.videoId = videoId;
-            track.thumbnailURL = [self compatThumbnailURL:thumbnail videoId:videoId];
-            NSArray *parts = [self filteredRuns:[it objectForKey:@"subtitle"][@"runs"]];
-            if (parts.count) track.artist = [parts objectAtIndex:0];
-            return track;
-        }
-    }
-
-    NSDictionary *browse = [nav objectForKey:@"browseEndpoint"];
-    if (browse) {
-        NSString *browseId = [browse objectForKey:@"browseId"];
-        if (![browseId isKindOfClass:[NSString class]] || !browseId.length) return nil;
-        LTBrowseItem *bi = [[LTBrowseItem alloc] init];
-        bi.browseId = browseId;
-        bi.title = title;
-        bi.kind = [self kindForBrowseId:browseId];
-        bi.thumbnailURL = thumbnail;
-        if (bi.kind == LTBrowseKindArtist) {
-            bi.thumbnailURL = [self squareAvatarURL:bi.thumbnailURL size:160];
-        }
-        bi.subtitle = [self textFromRuns:[it objectForKey:@"subtitle"][@"runs"]];
-        return bi;
-    }
-    return nil;
 }
 
 // The user's YouTube Music library playlists (grid). YouTube Music answers

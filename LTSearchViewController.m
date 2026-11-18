@@ -36,6 +36,7 @@
 @property (nonatomic, assign) BOOL showingHistory;
 // Idle state (no query): recommendation content mirroring the Home screen.
 @property (nonatomic, strong) NSArray *idleChips;
+@property (nonatomic, assign) BOOL idleShelvesLoaded;
 @property (nonatomic, strong) NSArray *idleShelves;  // @{"title","items"}
 @end
 
@@ -270,11 +271,13 @@
     [self loadIdleShelvesIfNeeded];
 }
 
-// "Recommended for you" shelves, shared with Home via LTPersonalShelves
-// (cached per seed set, so switching tabs refetches nothing). Built purely
-// from the listening history — no country/geo-based content here.
+// "Recommended for you" shelves, shared with Home via LTPersonalShelves.
+// Built purely from the listening history — no country/geo-based content.
+// Fetch policy: built once per session (or after the Home refresh button
+// drops the shared cache) — switching tabs or playing songs never refetches.
 - (void)loadIdleShelvesIfNeeded {
-    if (self.idleShelves.count) return;
+    if (self.idleShelvesLoaded && [LTPersonalShelves hasCachedShelves]) return;
+    self.idleShelvesLoaded = YES;
     __weak LTSearchViewController *weakSelf = self;
     [LTPersonalShelves buildShelvesWithCompletion:^(NSArray *shelves, BOOL finished) {
         LTSearchViewController *strongSelf = weakSelf;

@@ -43,6 +43,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 @property (nonatomic, strong) LTTrack *pendingRemoveTrack;
 @property (nonatomic, assign) BOOL ignorePlaylistChanges;
 @property (nonatomic, strong) NSMutableSet *attemptedArtistAvatars;
+- (void)refreshAccountPlaylistsForced:(BOOL)force;
 @end
 
 @implementation LTLibraryViewController
@@ -185,10 +186,15 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 
 // Refreshes the account playlists once per session (and after each sign-in).
 // On failure the cached copy stays visible; the error state is only shown when
-// there is nothing cached at all.
+// there is nothing cached at all. A user tap on the retry row forces a retry.
 - (void)refreshAccountPlaylists {
+    [self refreshAccountPlaylistsForced:NO];
+}
+
+- (void)refreshAccountPlaylistsForced:(BOOL)force {
     if (!self.signedIn) return;
     if (self.accountLoading) return;
+    if (self.accountRefreshed && !force) return;
     self.accountLoading = YES;
     self.accountError = NO;
     [self reloadForSegment];
@@ -701,7 +707,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 
     if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn && indexPath.section == 0) {
         if (self.accountError) {
-            [self refreshAccountPlaylists];
+            [self refreshAccountPlaylistsForced:YES];
             return;
         }
         if (self.accountLoading) return;

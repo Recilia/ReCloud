@@ -12,6 +12,7 @@
 @property (nonatomic, strong) UILabel *headerLabel;
 @property (nonatomic, strong) UIImageView *backgroundImageView;
 @property (nonatomic, strong) UIView *scrimView;
+@property (nonatomic, copy) NSString *lastBackgroundURL;
 @property (nonatomic, strong) UIBarButtonItem *editButton;
 @end
 
@@ -152,6 +153,13 @@
     LTTrack *track = [[LTPlayerController sharedController] currentTrack];
     if (!track || !track.thumbnailURL.length) return;
     NSString *url = [[LTYouTubeClient sharedClient] listThumbnailURL:track.thumbnailURL];
+    // One-entry cache: leaving and re-entering the queue (or any other action)
+    // must not re-download and re-blur the same artwork.
+    if (self.lastBackgroundURL && [self.lastBackgroundURL isEqualToString:url] &&
+        self.backgroundImageView.image) {
+        return;
+    }
+    self.lastBackgroundURL = url;
     __weak LTQueueViewController *weakSelf = self;
     [[LTYouTubeClient sharedClient] loadImageWithURL:url completion:^(UIImage *image) {
         if (!image) return;

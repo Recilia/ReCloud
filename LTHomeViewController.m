@@ -30,7 +30,6 @@
 @property (nonatomic, strong) NSArray *homeShelves;    // @{"title",@"items"}
 @property (nonatomic, strong) NSArray *radioSeeds;     // LTTrack seeds the home shelves were built from
 @property (nonatomic, assign) BOOL radioLoading;
-@property (nonatomic, assign) BOOL serverHomeLoading;
 @property (nonatomic, strong) UIBarButtonItem *refreshItem;
 @property (nonatomic, assign) BOOL refreshing;
 @property (nonatomic, strong) NSArray *libraryItems;   // LTBrowseItem
@@ -310,32 +309,22 @@
 - (void)loadRecentsRadioShelvesIfNeededWithCompletion:(void (^)(void))completion {
     self.recentTracks = [[LTPlaylistStore sharedStore] recentTracks];
     if (!self.recentTracks.count) {
-        // No listening history yet: fall back to YouTube's server home
-        // shelves for signed-in users so the page is never empty.
-        if ([[LTAuth sharedAuth] signedIn] && !self.homeShelves.count && !self.serverHomeLoading) {
-            self.serverHomeLoading = YES;
-            LTYouTubeClient *client = [LTYouTubeClient sharedClient];
-            __weak LTHomeViewController *weakSelf = self;
-            [client fetchHomeRecommendationsWithCompletion:^(NSArray *shelves, NSError *error) {
-                if (error) LTLog(@"HOME home shelves error %@", error);
-                LTHomeViewController *strongSelf = weakSelf;
-                if (!strongSelf) return;
-                strongSelf.serverHomeLoading = NO;
-                if (shelves.count) strongSelf.homeShelves = shelves;
-                [strongSelf reloadData];
-                if (completion) completion();
-            }];
-        } else {
-            if (completion) completion();
-        }
-        return;
-    }
-
-    NSArray *seeds = [LTPersonalShelves currentSeeds];
-    if ([self.radioSeeds isEqualToArray:seeds]) { // nothing new
+        // No listening history yet: recommend nothing. (The old fallback
+        // pulled YouTube's country-personalized home shelves — geo content,
+        // removed.) The empty state tells the user what to do.
         if (completion) completion();
         return;
     }
+
+    // Rebuild only when there is nothing cached yet or the user's refresh
+    // button / a sign-in change dropped the cache — never on every action
+    // (appearing, playing a song, etc.). Stale seeds are fine; the refresh
+    // button is the explicit way to catch up.
+    if (self.radioSeeds && [LTPersonalShelves hasCachedShelves]) {
+        if (completion) completion();
+        return;
+    }
+    NSArray *seeds = [LTPersonalShelves currentSeeds];
     self.radioSeeds = seeds;
     self.radioLoading = YES;
 
@@ -388,7 +377,7 @@
     [self.tableView reloadData];
     if (self.sections.count == 0) {
         if ([[LTAuth sharedAuth] signedIn]) {
-            self.emptyLabel.text = @"Loading your music…";
+            self.emptyLabel.text = @"Nothing here yet.\nPlay a song, or tap ↻ to fetch recommendations.";
         } else {
             self.emptyLabel.text = @"Nothing here yet.\nPlay a song and create playlists to see them.";
         }
@@ -399,10 +388,9 @@
 }
 
 - (void)storeDidChange:(NSNotification *)notification {
-    // Recents may have changed (new song played) — rebuild the radio shelves
-    // when the seed set differs; loadRecentsRadioShelvesIfNeeded no-ops
-    // otherwise.
-    [self loadRecentsRadioShelvesIfNeeded];
+    // Recents/playlists changed: only update the locally-built sections.
+    // The radio shelves are NOT rebuilt here — a new song must not trigger
+    // network work; the refresh button rebuilds them on demand.
     [self reloadData];
 }
 

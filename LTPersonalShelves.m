@@ -32,6 +32,10 @@ static NSMutableArray *_pendingCompletions;
     _cachedShelves = nil;
 }
 
++ (BOOL)hasCachedShelves {
+    return _cachedSeeds != nil;
+}
+
 + (void)buildShelvesWithCompletion:(void (^)(NSArray *shelves, BOOL finished))completion {
     if (!completion) return;
     NSArray *seeds = [self currentSeeds];

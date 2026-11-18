@@ -67,6 +67,7 @@ ReinMusic_FILES = main.m \
 	LTStatsDetailViewController.m \
 	LTDebugMenuViewController.m \
 	LTDebugSettings.m \
+	LTUpdater.m \
 	LTiPodViewController.m
 ReinMusic_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore MediaPlayer
 ReinMusic_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-objc-interface-ivars
