@@ -441,7 +441,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         if (![LTUpdater openDownloadedFileInFilza:self.downloadedUpdatePath]) {
             UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Filza Not Found"
                                                             message:[NSString stringWithFormat:
-                                        @"The update is saved at:\n%@\n\nInstall it with Filza or your package manager.",
+                                        @"The update is saved at:\n%@\n\nInstall it with Filza (AppSync Unified) or your usual IPA installer.",
                                         self.downloadedUpdatePath]
                                                            delegate:nil
                                                   cancelButtonTitle:@"OK"
@@ -565,7 +565,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             } else if (self.updateRelease && self.updateVersion.length) {
                 cell.textLabel.text = [NSString stringWithFormat:@"Download %@", self.updateVersion];
                 cell.textLabel.textColor = [LTTheme accent];
-                cell.detailTextLabel.text = @"Update available";
+                cell.detailTextLabel.text = [LTUpdater isLegacyDevice] ? @"legacy IPA" : @"arm64 IPA";
             } else {
                 cell.textLabel.text = @"Check for Updates";
                 cell.detailTextLabel.text = self.updateChecked
@@ -741,7 +741,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         if (![LTUpdater openDownloadedFileInFilza:self.downloadedUpdatePath]) {
             UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Update Downloaded"
                                                             message:[NSString stringWithFormat:
-                                @"Saved to:\n%@\n\nOpen it with Filza (installer) or your package manager to update.",
+                                @"Saved to:\n%@\n\nOpen it in Filza (with AppSync Unified) or install it with your usual IPA tool to update.",
                                 self.downloadedUpdatePath]
                                                            delegate:nil
                                                   cancelButtonTitle:@"OK"
@@ -782,14 +782,30 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             [alert show];
             return;
         }
-        if ([LTUpdater isReleaseNewer:release] && [LTUpdater assetForRelease:release]) {
+        if ([LTUpdater isReleaseNewer:release]) {
+            NSDictionary *asset = [LTUpdater assetForRelease:release];
+            if (!asset) {
+                strongSelf.updateRelease = nil;
+                strongSelf.updateVersion = nil;
+                [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
+                                 withRowAnimation:UITableViewRowAnimationNone];
+                UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"No IPA for This Device"
+                                                                message:[NSString stringWithFormat:
+                                            @"%@ does not include an IPA built for this device yet.",
+                                            latestVersion.length ? latestVersion : @"This release"]
+                                                               delegate:nil
+                                                      cancelButtonTitle:@"OK"
+                                                      otherButtonTitles:nil];
+                [alert show];
+                return;
+            }
             strongSelf.updateRelease = release;
             strongSelf.updateVersion = latestVersion;
             [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
                              withRowAnimation:UITableViewRowAnimationNone];
             UIAlertView *alert = [[UIAlertView alloc] initWithTitle:
                                       [NSString stringWithFormat:@"Update %@ available", latestVersion]
-                                                            message:@"Download it now? The file is saved to the app's Documents folder."
+                                                            message:@"Download the IPA now? It is saved to the app's Documents folder."
                                                            delegate:self
                                                   cancelButtonTitle:@"Not Now"
                                                   otherButtonTitles:@"Download", nil];
@@ -828,7 +844,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionUpdates]
                              withRowAnimation:UITableViewRowAnimationNone];
             UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Update Downloaded"
-                                                            message:@"Open it with Filza to install, or find it in the app's Documents folder."
+                                                            message:@"Open it in Filza (AppSync Unified) or your IPA installer to update. It is also saved in the app's Documents folder."
                                                            delegate:self
                                                   cancelButtonTitle:@"Later"
                                                   otherButtonTitles:@"Open in Filza", nil];

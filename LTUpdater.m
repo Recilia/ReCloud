@@ -1,7 +1,6 @@
 #import "LTUpdater.h"
 #import "LTLog.h"
 #import <UIKit/UIKit.h>
-#import <sys/utsname.h>
 
 static NSString *const LTUpdaterLatestReleaseURL =
     @"https://api.github.com/repos/Recilia/ReCloud/releases/latest";
@@ -50,29 +49,22 @@ static NSInteger LTCompareVersions(NSString *a, NSString *b) {
     return LTCompareVersions(latest, [self currentVersion]) > 0;
 }
 
-#pragma mark - Device / install type
+#pragma mark - Device type
 
-+ (BOOL)isJailbroken {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *paths = @[@"/Applications/Cydia.app",
-                       @"/Applications/Sileo.app",
-                       @"/var/lib/dpkg/status",
-                       @"/bin/bash",
-                       @"/usr/sbin/sshd"];
-    for (NSString *path in paths) {
-        if ([fm fileExistsAtPath:path]) return YES;
-    }
-    return NO;
++ (BOOL)isLegacyDevice {
+    return sizeof(void *) == 4;
 }
 
-// 64-bit slice => modern device; the 32-bit slice covers the legacy phones.
+// 64-bit slice => arm64 device; 32-bit slice => armv7/armv7s legacy phones.
+// This is decided at runtime by the slice iOS actually launched, which is
+// exactly the one whose IPA can be installed on top of this build.
 + (BOOL)isModernDevice {
-    return sizeof(void *) == 8;
+    return ![self isLegacyDevice];
 }
 
-// Asset name suffixes in preference order for this install.
+// Only the IPAs are ever downloaded. Legacy devices prefer the armv7 build,
+// with the regular IPA as a fallback if a release only shipped that.
 + (NSArray *)preferredAssetSuffixes {
-    if ([self isJailbroken]) return @[@"-rootful.deb", @".deb"];
     if ([self isModernDevice]) return @[@".ipa"];
     return @[@"-legacy.ipa", @".ipa"];
 }
@@ -88,11 +80,8 @@ static NSInteger LTCompareVersions(NSString *a, NSString *b) {
             if (![name isKindOfClass:[NSString class]]) continue;
             NSString *lower = [name lowercaseString];
             if (![lower hasSuffix:[suffix lowercaseString]]) continue;
-            // On modern devices skip the legacy build when the plain .ipa exists.
-            if ([self isModernDevice] && ![self isJailbroken] &&
-                [lower hasSuffix:@"-legacy.ipa"] && ![suffix isEqualToString:@"-legacy.ipa"]) {
-                continue;
-            }
+            // 64-bit devices must never take the armv7-only legacy build.
+            if ([self isModernDevice] && [lower hasSuffix:@"-legacy.ipa"]) continue;
             if ([a objectForKey:@"browser_download_url"]) return a;
         }
     }
@@ -201,16 +190,6 @@ static NSInteger LTCompareVersions(NSString *a, NSString *b) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
         BOOL ok = [data writeToFile:path atomically:YES];
         LTLog(@"UPDATER saved %@ (%lu bytes) ok=%d", path, (unsigned long)data.length, ok ? 1 : 0);
-        // On jailbroken devices also stage a copy where it is easy to find
-        // with shell/SSH (best effort — the sandbox usually denies this).
-        if ([self isJailbroken] && [name hasSuffix:@".deb"]) {
-            NSString *publicPath = [@"/var/mobile/Documents" stringByAppendingPathComponent:name];
-            [[NSFileManager defaultManager] createDirectoryAtPath:@"/var/mobile/Documents"
-                                      withIntermediateDirectories:YES
-                                                       attributes:nil
-                                                            error:NULL];
-            [[NSFileManager defaultManager] copyItemAtPath:path toPath:publicPath error:NULL];
-        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!ok) {
                 if (completion) completion(nil, [NSError errorWithDomain:@"LTUpdater"

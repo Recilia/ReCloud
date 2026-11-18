@@ -5,11 +5,11 @@
 // contact GitHub.
 //
 // Flow: GET /repos/Recilia/ReCloud/releases/latest -> compare tag_name with
-// the running CFBundleVersion -> if newer, pick the asset that matches this
-// install (rootful .deb on jailbroken devices, otherwise the .ipa that fits
-// the CPU) and download it into the app's Documents folder. Installing is
-// handed to the device (Filza can install a .deb), since an app cannot run
-// dpkg itself.
+// the running CFBundleVersion -> if newer, pick the IPA built for this device
+// (ReCloud-<ver>-legacy.ipa on 32-bit armv7 devices, ReCloud-<ver>.ipa on
+// 64-bit devices) and download it into the app's Documents folder. Installing
+// is handed to the device (Filza with AppSync, AltStore or any sideloader),
+// since an app cannot install another app itself.
 @interface LTUpdater : NSObject
 
 // Running version, e.g. "3.4" (CFBundleVersion).
@@ -21,8 +21,12 @@
 // Human-readable release version ("3.4") from a release dictionary.
 + (NSString *)versionForRelease:(NSDictionary *)release;
 
-// The asset to download for this device, or nil if the release has none.
+// The IPA to download for this device: the -legacy build on 32-bit (armv7)
+// devices, the regular arm64 build otherwise. Nil if the release has neither.
 + (NSDictionary *)assetForRelease:(NSDictionary *)release;
+
+// YES when the running binary is the 32-bit (armv7) build, i.e. the legacy IPA.
++ (BOOL)isLegacyDevice;
 
 // Asynchronous check against the GitHub API. Completion always runs on the
 // main queue. On success `release` is the parsed JSON and `latestVersion` the
@@ -36,8 +40,9 @@
 + (void)downloadAsset:(NSDictionary *)asset
            completion:(void (^)(NSString *path, NSError *error))completion;
 
-// Opens a downloaded file in Filza (installs .deb packages there) when Filza
-// is installed. Returns NO if it could not be handed off.
+// Opens the downloaded IPA in Filza (which installs it when AppSync Unified
+// is present) or any other app that handles IPAs. Returns NO if it could not
+// be handed off.
 + (BOOL)openDownloadedFileInFilza:(NSString *)path;
 
 @end
