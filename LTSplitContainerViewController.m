@@ -208,7 +208,7 @@ typedef NS_ENUM(NSInteger, LTSidebarMode) {
     [self.sidebarView.layer addSublayer:self.sidebarSeparator];
 
     self.sidebarTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.sidebarTitleLabel.text = @"ReinMusic";
+    self.sidebarTitleLabel.text = @"Re:Cloud";
     self.sidebarTitleLabel.font = [UIFont boldSystemFontOfSize:16];
     self.sidebarTitleLabel.textColor = [UIColor colorWithWhite:0.85f alpha:1.0f];
     self.sidebarTitleLabel.backgroundColor = [UIColor clearColor];

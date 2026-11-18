@@ -7,7 +7,7 @@ static NSString *const LTUpdaterLatestReleaseURL =
     @"https://api.github.com/repos/Recilia/ReinMusic/releases/latest";
 
 // GitHub's REST API rejects requests without a User-Agent.
-static NSString *const LTUpdaterUserAgent = @"ReinMusic-Updater";
+static NSString *const LTUpdaterUserAgent = @"ReCloud-Updater";
 
 @implementation LTUpdater
 

@@ -28,6 +28,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     LTSettingsSectionData,
     LTSettingsSectionAbout,
     LTSettingsSectionCredits,
+    LTSettingsSectionBranding,
 };
 
 @interface LTSettingsViewController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate, UIActionSheetDelegate>
@@ -476,7 +477,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 #pragma mark - UITableViewDataSource
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 7;
+    return 8;
 }
 
 // The Theme row and the icon picker are appended after whatever the last
@@ -505,6 +506,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionData: return @"Data management";
         case LTSettingsSectionAbout: return @"About";
         case LTSettingsSectionCredits: return @"Credits";
+        case LTSettingsSectionBranding: return @"Branding";
         default: return @"";
     }
 }
@@ -518,6 +520,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionData: return 8;
         case LTSettingsSectionAbout: return 2;
         case LTSettingsSectionCredits: return 4;
+        case LTSettingsSectionBranding: return 2;
         default: return 0;
     }
 }
@@ -679,7 +682,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionAbout: {
             if (indexPath.row == 0) {
                 cell.textLabel.text = @"App";
-                cell.detailTextLabel.text = @"ReinMusic";
+                cell.detailTextLabel.text = @"Re:Cloud";
             } else {
                 cell.textLabel.text = @"Version";
                 NSString *version = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"];
@@ -702,6 +705,19 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             });
             cell.textLabel.text = [names objectAtIndex:(NSUInteger)indexPath.row];
             cell.detailTextLabel.text = [roles objectAtIndex:(NSUInteger)indexPath.row];
+            cell.accessoryView = nil;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            cell.detailTextLabel.textColor = [LTTheme secondaryText];
+            break;
+        }
+        case LTSettingsSectionBranding: {
+            if (indexPath.row == 0) {
+                cell.textLabel.text = @"Exelorent";
+                cell.detailTextLabel.text = @"Branding";
+            } else {
+                cell.textLabel.text = @"Discord: @s.tyx";
+                cell.detailTextLabel.text = @"";
+            }
             cell.accessoryView = nil;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
             cell.detailTextLabel.textColor = [LTTheme secondaryText];

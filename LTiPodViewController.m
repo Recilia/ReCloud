@@ -460,7 +460,7 @@ typedef NS_ENUM(NSInteger, LTiPodWheelButton) {
 
 - (LTiPodPane *)mainMenuPane {
     LTiPodPane *pane = [[LTiPodPane alloc] init];
-    pane.title = @"ReinMusic";
+    pane.title = @"Re:Cloud";
     NSMutableArray *items = [NSMutableArray array];
 
     LTPlayerController *player = [LTPlayerController sharedController];
@@ -627,7 +627,7 @@ typedef NS_ENUM(NSInteger, LTiPodWheelButton) {
     pane.title = @"About";
     pane.isInfo = YES;
     NSMutableArray *items = [NSMutableArray array];
-    NSArray *lines = @[@"ReinMusic",
+    NSArray *lines = @[@"Re:Cloud",
                        detail,
                        @"iPod mode emulator",
                        @"For legacy iOS devices",
