@@ -46,61 +46,263 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
     return [cookieHeader substringWithRange:[match rangeAtIndex:2]];
 }
 
-// DevTools hands out a "Cookie: a=b; c=d" header, some browsers wrap long
-// values over several lines, and a copied Set-Cookie block also carries
-// attributes (path, domain, expires, ...). Normalise all of that down to
-// plain name=value pairs so the same paste works everywhere.
+static NSString *LTAuthTrimmed(NSString *value) {
+    return [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+static BOOL LTAuthIsCookieAttribute(NSString *name) {
+    static NSSet *attributes = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        attributes = [NSSet setWithObjects:@"path", @"domain", @"expires", @"max-age",
+                      @"secure", @"httponly", @"samesite", @"priority", @"version",
+                      @"comment", @"discard", @"port", nil];
+    });
+    return [attributes containsObject:[name lowercaseString]];
+}
+
+static void LTAuthAddCookiePair(NSString *rawName, NSString *rawValue,
+                                NSMutableArray *pairs, NSMutableSet *seen) {
+    NSString *name = LTAuthTrimmed(rawName);
+    NSString *value = LTAuthTrimmed(rawValue);
+    if (!name.length || !value.length) return;
+
+    // Cookie names are tokens. This rejects header names such as
+    // ":authority" and fragments of a URL pulled out of a cURL command.
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-."];
+    if ([name rangeOfCharacterFromSet:[allowed invertedSet]].location != NSNotFound) return;
+    if (LTAuthIsCookieAttribute(name)) return;
+
+    // Browsers quote values; YouTube compares them unquoted.
+    if (value.length >= 2 && [value hasPrefix:@"\""] && [value hasSuffix:@"\""]) {
+        value = [value substringWithRange:NSMakeRange(1, value.length - 2)];
+    }
+    // A Set-Cookie value can be followed by attributes; keep only the value.
+    NSRange semicolon = [value rangeOfString:@";"];
+    if (semicolon.location != NSNotFound) {
+        value = LTAuthTrimmed([value substringToIndex:semicolon.location]);
+    }
+    if (!value.length) return;
+    if ([seen containsObject:name]) return;
+    [seen addObject:name];
+    [pairs addObject:[NSString stringWithFormat:@"%@=%@", name, value]];
+}
+
+// Continuation lines inside a wrapped "cookie:" block start with a real
+// cookie name, unlike the other request headers that may surround them.
+static BOOL LTAuthLineLooksLikeCookiePair(NSString *line) {
+    NSString *lower = [line lowercaseString];
+    for (NSString *name in LTAuthCookieWhitelist()) {
+        NSString *prefix = [[name lowercaseString] stringByAppendingString:@"="];
+        if ([lower hasPrefix:prefix]) return YES;
+    }
+    return NO;
+}
+
+// Accepts a raw "SID=...; HSID=..." blob, a "Cookie:" header, a whole
+// Request Headers block, and multi-line wraps of any of those.
+static void LTAuthCollectCookieBlob(NSString *blob, NSMutableArray *pairs, NSMutableSet *seen) {
+    if (!blob.length) return;
+    NSString *text = [blob stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    NSArray *rawLines = [text componentsSeparatedByString:@"\n"];
+
+    BOOL hasCookieLabel = NO;
+    for (NSString *rawLine in rawLines) {
+        NSString *line = LTAuthTrimmed(rawLine);
+        NSRange colon = [line rangeOfString:@":"];
+        if (colon.location == NSNotFound) continue;
+        NSString *label = [LTAuthTrimmed([line substringToIndex:colon.location]) lowercaseString];
+        if ([label isEqualToString:@"cookie"] || [label isEqualToString:@"set-cookie"]) {
+            hasCookieLabel = YES;
+            break;
+        }
+    }
+
+    for (NSString *rawLine in rawLines) {
+        NSString *line = LTAuthTrimmed(rawLine);
+        if (!line.length || [line hasPrefix:@"#"]) continue;
+
+        BOOL labelled = NO;
+        NSRange colon = [line rangeOfString:@":"];
+        if (colon.location != NSNotFound) {
+            NSString *label = [LTAuthTrimmed([line substringToIndex:colon.location]) lowercaseString];
+            if ([label isEqualToString:@"cookie"] || [label isEqualToString:@"set-cookie"]) {
+                line = LTAuthTrimmed([line substringFromIndex:colon.location + 1]);
+                labelled = YES;
+            }
+        }
+        if (hasCookieLabel && !labelled && !LTAuthLineLooksLikeCookiePair(line)) continue;
+        if (!line.length) continue;
+
+        for (NSString *rawPart in [line componentsSeparatedByString:@";"]) {
+            NSString *part = LTAuthTrimmed(rawPart);
+            if (!part.length) continue;
+            NSRange eq = [part rangeOfString:@"="];
+            if (eq.location == NSNotFound) continue;
+            LTAuthAddCookiePair([part substringToIndex:eq.location],
+                                [part substringFromIndex:eq.location + 1], pairs, seen);
+        }
+    }
+}
+
+// Netscape cookies.txt, as exported by browser extensions and yt-dlp:
+// domain<TAB>flag<TAB>path<TAB>secure<TAB>expiry<TAB>name<TAB>value
+static BOOL LTAuthCollectNetscapeCookies(NSString *text, NSMutableArray *pairs, NSMutableSet *seen) {
+    NSUInteger before = pairs.count;
+    for (NSString *rawLine in [text componentsSeparatedByString:@"\n"]) {
+        NSString *line = LTAuthTrimmed(rawLine);
+        if (!line.length) continue;
+        if ([line hasPrefix:@"#HttpOnly_"]) {
+            line = [line substringFromIndex:[@"#HttpOnly_" length]];
+        } else if ([line hasPrefix:@"#"]) {
+            continue;
+        }
+        NSArray *fields = [line componentsSeparatedByString:@"\t"];
+        if (fields.count < 7) continue;
+        NSString *domain = [[fields objectAtIndex:0] lowercaseString];
+        if (![domain hasSuffix:@"youtube.com"] && ![domain hasSuffix:@"google.com"] &&
+            ![domain hasSuffix:@"googleusercontent.com"]) continue;
+        LTAuthAddCookiePair([fields objectAtIndex:5], [fields objectAtIndex:6], pairs, seen);
+    }
+    return pairs.count > before;
+}
+
+static BOOL LTAuthTextLooksLikeCurl(NSString *text) {
+    NSString *lower = [text lowercaseString];
+    NSRange curl = [lower rangeOfString:@"curl"];
+    if (curl.location == NSNotFound) return NO;
+    if (curl.location > 0) {
+        unichar previous = [lower characterAtIndex:curl.location - 1];
+        if (![[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:previous]) return NO;
+    }
+    return ([lower rangeOfString:@"-h "].location != NSNotFound ||
+            [lower rangeOfString:@"--header"].location != NSNotFound ||
+            [lower rangeOfString:@"-b "].location != NSNotFound ||
+            [lower rangeOfString:@"--cookie"].location != NSNotFound);
+}
+
+// "Copy as cURL" from Chrome, Edge, Firefox or Safari. Handles bash ("\")
+// and Windows cmd ("^") line continuations and single or double quotes.
+static void LTAuthCollectFromCurl(NSString *text, NSMutableArray *pairs, NSMutableSet *seen) {
+    // cmd.exe escapes quotes as ^" and continues lines with a trailing ^.
+    NSString *clean = [text stringByReplacingOccurrencesOfString:@"^" withString:@""];
+    NSString *pattern = @"(?:^|\\s)(--header|--cookie|-H|-b)(?:=|\\s+)(?:'([^']*)'|\"([^\"]*)\"|(\\S+))";
+    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern
+                                                                           options:0
+                                                                             error:nil];
+    NSArray *matches = [regex matchesInString:clean options:0 range:NSMakeRange(0, clean.length)];
+    for (NSTextCheckingResult *match in matches) {
+        NSString *flag = [[clean substringWithRange:[match rangeAtIndex:1]] lowercaseString];
+        NSString *value = nil;
+        for (NSUInteger index = 2; index <= 4; index++) {
+            NSRange range = [match rangeAtIndex:index];
+            if (range.location != NSNotFound) {
+                value = [clean substringWithRange:range];
+                break;
+            }
+        }
+        if (!value.length) continue;
+
+        if ([flag isEqualToString:@"-b"] || [flag isEqualToString:@"--cookie"]) {
+            // A bare path here would be a cookie file, which we can't read.
+            if ([value rangeOfString:@"="].location == NSNotFound) continue;
+            LTAuthCollectCookieBlob(value, pairs, seen);
+            continue;
+        }
+
+        NSRange colon = [value rangeOfString:@":"];
+        if (colon.location == NSNotFound) continue;
+        NSString *header = [LTAuthTrimmed([value substringToIndex:colon.location]) lowercaseString];
+        if (![header isEqualToString:@"cookie"]) continue;
+        LTAuthCollectCookieBlob([value substringFromIndex:colon.location + 1], pairs, seen);
+    }
+}
+
+// DevTools "Copy object" / extensions that export JSON.
+static void LTAuthCollectCookieJSONObject(id object, NSMutableArray *pairs,
+                                          NSMutableSet *seen, BOOL insideCookieArray) {
+    if ([object isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dictionary = object;
+        BOOL cookieObject = insideCookieArray;
+        if (!cookieObject) {
+            // Cookie-Editor and similar tools export an array of objects such
+            // as {"domain":".youtube.com","name":"SID","value":"..."}.
+            cookieObject = ([dictionary objectForKey:@"domain"] != nil ||
+                            [dictionary objectForKey:@"path"] != nil ||
+                            [dictionary objectForKey:@"expirationDate"] != nil ||
+                            [dictionary objectForKey:@"httpOnly"] != nil);
+        }
+        if (cookieObject) {
+            id name = [dictionary objectForKey:@"name"];
+            id value = [dictionary objectForKey:@"value"];
+            if ([name isKindOfClass:[NSString class]] && [value isKindOfClass:[NSString class]]) {
+                LTAuthAddCookiePair(name, value, pairs, seen);
+            }
+        }
+        for (id key in dictionary) {
+            if (![key isKindOfClass:[NSString class]]) continue;
+            id value = [dictionary objectForKey:key];
+            NSString *lower = [key lowercaseString];
+            if ([lower isEqualToString:@"cookie"] && [value isKindOfClass:[NSString class]]) {
+                LTAuthCollectCookieBlob(value, pairs, seen);
+            } else if ([lower isEqualToString:@"cookies"] && [value isKindOfClass:[NSArray class]]) {
+                for (id entry in (NSArray *)value) {
+                    if ([entry isKindOfClass:[NSDictionary class]]) {
+                        LTAuthCollectCookieJSONObject(entry, pairs, seen, YES);
+                    } else if ([entry isKindOfClass:[NSString class]]) {
+                        LTAuthCollectCookieBlob(entry, pairs, seen);
+                    }
+                }
+            } else if ([value isKindOfClass:[NSDictionary class]] ||
+                       [value isKindOfClass:[NSArray class]]) {
+                LTAuthCollectCookieJSONObject(value, pairs, seen, NO);
+            }
+        }
+    } else if ([object isKindOfClass:[NSArray class]]) {
+        for (id entry in (NSArray *)object) {
+            LTAuthCollectCookieJSONObject(entry, pairs, seen, insideCookieArray);
+        }
+    }
+}
+
+// DevTools hands out a "Cookie: a=b; c=d" header, browsers wrap long values,
+// and a copied Set-Cookie block also carries attributes (path, domain, ...).
+// Accept all of those, plus "Copy as cURL", JSON and Netscape cookies.txt, so
+// the user only has to right-click once.
 static NSString *LTAuthSanitizedCookieHeader(NSString *raw) {
     if (!raw.length) return nil;
 
-    // Work line by line so a whole "Request Headers" block also works: drop a
-    // leading "Cookie:" / "set-cookie:" label on each line, then treat the
-    // remaining lines as cookie pairs (other headers simply don't parse).
-    NSString *normalized = [raw stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
-    NSMutableArray *lines = [NSMutableArray array];
-    for (NSString *rawLine in [normalized componentsSeparatedByString:@"\n"]) {
-        NSString *line = [rawLine stringByReplacingOccurrencesOfString:@"\t" withString:@" "];
-        line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (!line.length) continue;
-        NSRange colon = [line rangeOfString:@":"];
-        if (colon.location != NSNotFound) {
-            NSString *label = [[line substringToIndex:colon.location] lowercaseString];
-            label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if ([label isEqualToString:@"cookie"] || [label isEqualToString:@"set-cookie"]) {
-                line = [line substringFromIndex:colon.location + 1];
-            }
-        }
-        [lines addObject:line];
-    }
-    NSString *text = [lines componentsJoinedByString:@";"];
-
-    NSSet *attributes = [NSSet setWithObjects:@"path", @"domain", @"expires", @"max-age",
-                         @"secure", @"httponly", @"samesite", @"priority", @"version",
-                         @"comment", @"discard", @"port", nil];
+    NSString *text = [raw stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
     NSMutableArray *pairs = [NSMutableArray array];
     NSMutableSet *seen = [NSMutableSet set];
 
-    for (NSString *rawPart in [text componentsSeparatedByString:@";"]) {
-        NSString *part = [rawPart stringByTrimmingCharactersInSet:
-                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (!part.length) continue;
-        NSRange eq = [part rangeOfString:@"="];
-        if (eq.location == NSNotFound) continue;
-
-        NSString *name = [[part substringToIndex:eq.location] stringByTrimmingCharactersInSet:
-                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSString *value = [[part substringFromIndex:eq.location + 1] stringByTrimmingCharactersInSet:
-                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (!name.length || !value.length) continue;
-        if ([name rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound) continue;
-        if ([attributes containsObject:[name lowercaseString]]) continue;
-        // Browsers quote values; YouTube compares them unquoted.
-        if (value.length >= 2 && [value hasPrefix:@"\""] && [value hasSuffix:@"\""]) {
-            value = [value substringWithRange:NSMakeRange(1, value.length - 2)];
+    if (LTAuthCollectNetscapeCookies(text, pairs, seen)) {
+        // Netscape export.
+    } else if (LTAuthTextLooksLikeCurl(text)) {
+        LTAuthCollectFromCurl(text, pairs, seen);
+    } else {
+        NSString *trimmed = LTAuthTrimmed(text);
+        if ([trimmed hasPrefix:@"{"] || [trimmed hasPrefix:@"["]) {
+            NSData *data = [trimmed dataUsingEncoding:NSUTF8StringEncoding];
+            id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if (json) LTAuthCollectCookieJSONObject(json, pairs, seen, NO);
         }
-        if ([seen containsObject:name]) continue;
-        [seen addObject:name];
-        [pairs addObject:[NSString stringWithFormat:@"%@=%@", name, value]];
+        if (!pairs.count) {
+            // DevTools "Copy as fetch" / PowerShell snippets are JS objects,
+            // not JSON, but still contain one quoted "cookie" header value.
+            NSString *pattern = @"[\"']cookie[\"']\\s*[:=]\\s*[\"']([^\"']+)[\"']";
+            NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern
+                                                                                   options:NSRegularExpressionCaseInsensitive
+                                                                                     error:nil];
+            NSArray *matches = [regex matchesInString:text options:0 range:NSMakeRange(0, text.length)];
+            for (NSTextCheckingResult *match in matches) {
+                if (match.numberOfRanges < 2) continue;
+                NSString *value = [text substringWithRange:[match rangeAtIndex:1]];
+                LTAuthCollectCookieBlob(value, pairs, seen);
+            }
+        }
+        if (!pairs.count) LTAuthCollectCookieBlob(text, pairs, seen);
     }
 
     if (!pairs.count) return nil;

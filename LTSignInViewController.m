@@ -4,12 +4,12 @@
 #import "LTLog.h"
 #import "LTTheme.h"
 
-// Google account sign-in via a pasted SAPISID cookie. The in-app web login
+// Google account sign-in via a pasted cookie. The in-app web login
 // (UIWebView) was removed: Google's login page crashes the legacy WebKit
 // engine on old armv7 devices mid-render, and the crash is native and
-// uncatchable. Pasting the SAPISID value (or the full Cookie header) from a
-// desktop browser signed into YouTube Music always works and provides the
-// exact same credentials.
+// uncatchable. Pasting a browser "Copy as cURL" block (or a Cookie header)
+// from a desktop browser signed into YouTube Music avoids all of that; the
+// cookie parser pulls the individual cookies out of whatever was pasted.
 
 @interface LTSignInViewController () <UIAlertViewDelegate, UITextFieldDelegate>
 @property (nonatomic, assign) BOOL pasteOnly;
@@ -51,7 +51,7 @@
     self.hintLabel.numberOfLines = 4;
     self.hintLabel.textAlignment = NSTextAlignmentCenter;
     self.hintLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
-    self.hintLabel.text = @"Sign in to music.youtube.com in a desktop browser, then\ncopy the whole Cookie header (DevTools → Network → any request →\nRequest Headers → Cookie) and paste it here. Include\n__Secure-3PAPISID if it is listed.";
+    self.hintLabel.text = @"Sign in at music.youtube.com on a computer. Right-click any\nrequest → Copy → Copy as cURL, then paste it here.\nCookies are pulled out automatically.\nNo need to hunt for them by hand.";
     [self.view addSubview:self.hintLabel];
 
     if (self.pasteOnly) {
@@ -59,7 +59,7 @@
         return;
     }
 
-    self.pasteButton = [self actionButtonWithTitle:@"Paste SAPISID cookie"
+    self.pasteButton = [self actionButtonWithTitle:@"Paste from browser"
                                                  y:CGRectGetMaxY(self.hintLabel.frame) + 8];
     [self.pasteButton addTarget:self
                          action:@selector(pasteTapped:)
@@ -129,9 +129,9 @@
 
         NSString *message;
         if (![[LTAuth sharedAuth] hasLoginInfo]) {
-            message = @"The pasted cookie does not include LOGIN_INFO, so YouTube still serves this request as a guest.\n\nA single SAPISID value is no longer enough. In a desktop browser open music.youtube.com while signed in, open DevTools → Network → any request to music.youtube.com → Request Headers, copy the entire Cookie header (SID, HSID, SSID, APISID, SAPISID, __Secure-3PAPISID, LOGIN_INFO) and paste that.";
+            message = @"The paste did not include LOGIN_INFO, so YouTube still serves this request as a guest.\n\nOn a computer, sign in at music.youtube.com, right-click any request in DevTools → Network, choose Copy → Copy as cURL, and paste that whole block here. It contains every cookie YouTube needs.";
         } else if (authRejected) {
-            message = @"YouTube Music still sees this request as signed out.\n\nMake sure the cookie was copied from a tab that is open on music.youtube.com while signed in, and capture it while this iPhone is on the same Wi-Fi network as the browser (Google ties the session to the originating network).\n\nThe pasted cookie has been kept, so you can retry from Settings → Account → Check account access.";
+            message = @"YouTube Music still sees this request as signed out.\n\nCapture the cookies from a tab that is open on music.youtube.com while signed in, and make sure this iPhone is on the same Wi-Fi network as the computer (Google ties the session to the originating network).\n\nThe pasted cookie has been kept, so you can retry from Settings → Account → Check account access.";
         } else {
             message = @"Couldn't reach YouTube Music to verify the cookie. Check the connection and tap Check again.\n\nThe pasted cookie has been kept.";
             if (error.localizedDescription.length) {
@@ -152,7 +152,7 @@
 - (void)checkTapped:(id)sender {
     if (![self tryAdoptCookies]) {
         UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Not signed in yet"
-                                                        message:@"No Google account cookie found. Paste the SAPISID cookie from a desktop browser signed into YouTube Music."
+                                                        message:@"No Google account cookie found. Right-click any request on music.youtube.com in DevTools → Network, choose Copy → Copy as cURL, and paste that block."
                                                        delegate:nil
                                               cancelButtonTitle:@"OK"
                                               otherButtonTitles:nil];
@@ -162,8 +162,8 @@
 
 - (void)pasteTapped:(id)sender {
     if (!self.pasteAlert) {
-        self.pasteAlert = [[UIAlertView alloc] initWithTitle:@"Paste credentials"
-                                                     message:@"Paste the whole Cookie header from a desktop browser tab that is open on music.youtube.com while signed in. A bare __Secure-3PAPISID / SAPISID value also works."
+        self.pasteAlert = [[UIAlertView alloc] initWithTitle:@"Paste sign-in"
+                                                     message:@"Paste a \"Copy as cURL\" block, the Cookie header, a cookies.txt export, or a bare SAPISID. Cookies are detected automatically; you don't need to pick them out."
                                                     delegate:self
                                            cancelButtonTitle:@"Cancel"
                                            otherButtonTitles:@"Save", nil];
@@ -171,7 +171,7 @@
         UITextField *field = [self.pasteAlert textFieldAtIndex:0];
         field.secureTextEntry = YES;
         field.delegate = self;
-        field.placeholder = @"SAPISID=... or bare token";
+        field.placeholder = @"Copy as cURL, Cookie header, or SAPISID";
     }
     [self.pasteAlert show];
 }
