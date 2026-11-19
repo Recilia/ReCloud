@@ -100,6 +100,39 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     [alert show];
 }
 
+// Runs the same first-page library probe used to validate a pasted cookie, so
+// a user can tell whether YouTube actually accepts the stored sign-in.
+- (void)checkAccountAccess {
+    UIAlertView *wait = [[UIAlertView alloc] initWithTitle:@"Checking account"
+                                                   message:@"Asking YouTube Music for your library…"
+                                                  delegate:nil
+                                         cancelButtonTitle:nil
+                                         otherButtonTitles:nil];
+    [wait show];
+
+    [[LTYouTubeClient sharedClient] checkLibraryAuthWithCompletion:^(BOOL signedIn, NSError *error) {
+        [wait dismissWithClickedButtonIndex:0 animated:NO];
+
+        NSString *title = signedIn ? @"Account OK" : @"Account not signed in";
+        NSString *message;
+        if (signedIn) {
+            NSString *name = [[LTAuth sharedAuth] accountName];
+            message = name.length
+                ? [NSString stringWithFormat:@"YouTube Music accepted the stored cookie for %@ and returned your library.", name]
+                : @"YouTube Music accepted the stored cookie and returned your library.";
+        } else {
+            message = error.localizedDescription.length ? error.localizedDescription
+                : @"YouTube Music still treats this session as signed out. Paste a fresh cookie.";
+        }
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:title
+                                                        message:message
+                                                       delegate:nil
+                                              cancelButtonTitle:@"OK"
+                                              otherButtonTitles:nil];
+        [alert show];
+    }];
+}
+
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     [self applyTheme];
@@ -533,7 +566,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case LTSettingsSectionUpdates: return 1;
-        case LTSettingsSectionAccount: return 1;
+        case LTSettingsSectionAccount: return [[LTAuth sharedAuth] signedIn] ? 3 : 1;
         case LTSettingsSectionPlayback: return 2;
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
         case LTSettingsSectionData: return 9;
@@ -599,13 +632,25 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionAccount: {
             if ([[LTAuth sharedAuth] signedIn]) {
                 NSString *name = [[LTAuth sharedAuth] accountName];
-                cell.textLabel.text = name.length ? name : @"Signed in";
-                cell.detailTextLabel.text = @"Google";
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+                if (indexPath.row == 0) {
+                    cell.textLabel.text = name.length ? name : @"Signed in";
+                    cell.detailTextLabel.text = @"Google";
+                    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+                } else if (indexPath.row == 1) {
+                    cell.textLabel.text = @"Check account access";
+                    cell.detailTextLabel.text = @"Test cookies";
+                    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+                } else {
+                    cell.textLabel.text = @"Paste a new cookie";
+                    cell.detailTextLabel.text = @"Replace sign-in";
+                    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+                }
             } else {
                 cell.textLabel.text = @"Sign in to Google";
-                cell.detailTextLabel.text = @"For recommendations";
+                cell.detailTextLabel.text = @"For library and history";
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             }
@@ -901,8 +946,15 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         return;
     }
     if (indexPath.section == LTSettingsSectionAccount) {
-        if ([[LTAuth sharedAuth] signedIn]) {
+        if (![[LTAuth sharedAuth] signedIn]) {
+            LTSignInViewController *vc = [[LTSignInViewController alloc] initWithPasteOnly:NO];
+            [self.navigationController pushViewController:vc animated:YES];
+            return;
+        }
+        if (indexPath.row == 0) {
             [self confirmSignOut];
+        } else if (indexPath.row == 1) {
+            [self checkAccountAccess];
         } else {
             LTSignInViewController *vc = [[LTSignInViewController alloc] initWithPasteOnly:NO];
             [self.navigationController pushViewController:vc animated:YES];

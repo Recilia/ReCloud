@@ -180,7 +180,8 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
             @"clientName": @"WEB_REMIX",
             @"clientVersion": @"1.20250721.00.00",
             @"hl": @"en",
-        }
+        },
+        @"user": @{},
     };
 }
 
@@ -918,10 +919,33 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     return nil;
 }
 
-// Display name of the signed-in Google account. Also acts as the sign-in
-// check: YouTube answers an expired/incorrect cookie with a sign-in prompt
-// instead of the account menu, which must be reported as an auth failure so
-// the Sign in screen does not claim success.
+// Reads the "logged_in" flag YouTube puts in responseContext.serviceTrackingParams.
+// It is the ground truth for whether the server authenticated the request;
+// keep it for logs because a signed-in account can still get logged_in=0 in
+// some account_menu responses while the library endpoints work.
+- (NSString *)loggedInFlagForResponse:(id)json {
+    id params = [self firstValueForKey:@"serviceTrackingParams" inObject:json];
+    if (![params isKindOfClass:[NSArray class]]) return nil;
+    for (id service in (NSArray *)params) {
+        if (![service isKindOfClass:[NSDictionary class]]) continue;
+        id values = [service objectForKey:@"params"];
+        if (![values isKindOfClass:[NSArray class]]) continue;
+        for (id entry in (NSArray *)values) {
+            if (![entry isKindOfClass:[NSDictionary class]]) continue;
+            id key = [entry objectForKey:@"key"];
+            if ([key isKindOfClass:[NSString class]] && [key isEqualToString:@"logged_in"]) {
+                id value = [entry objectForKey:@"value"];
+                return [value isKindOfClass:[NSString class]] ? value : nil;
+            }
+        }
+    }
+    return nil;
+}
+
+// Display name of the signed-in Google account. The name is best-effort:
+// YouTube can omit it (or report logged_in=0 in the account menu) while the
+// account is still authenticated, so a missing name is not treated as an
+// error. checkLibraryAuthWithCompletion: is the actual sign-in test.
 - (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion {
     NSDictionary *body = @{@"context": [self webRemixContext]};
     [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body completion:^(id json, NSError *error) {
@@ -930,7 +954,7 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
             return;
         }
         if (![json isKindOfClass:[NSDictionary class]]) {
-            if (completion) completion(nil, [self errorWithCode:2 message:@"Couldn't read the account response."]);
+            if (completion) completion(nil, nil);
             return;
         }
 
@@ -947,18 +971,53 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
             }
         }
 
+        LTLog(@"AUTH account_menu logged_in=%@ name=%@",
+              [self loggedInFlagForResponse:json] ?: @"?", name.length ? @"yes" : @"no");
+
         if (name.length) {
             if (completion) completion(name, nil);
             return;
         }
-
         if ([self responseRequiresSignIn:json]) {
             if (completion) completion(nil, [self errorWithCode:401
                 message:@"YouTube Music did not accept the cookie. Copy it again from a browser tab that is open on music.youtube.com while signed in."]);
-        } else {
-            if (completion) completion(nil, [self errorWithCode:401
-                message:@"YouTube Music did not confirm the account. The cookie may belong to a different Google domain or be expired."]);
+            return;
         }
+        if (completion) completion(nil, nil);
+    }];
+}
+
+// One browse request is enough to tell whether the stored cookie authenticates:
+// a guest gets a "Sign in" card, a signed-in account gets the library grid
+// (which may legitimately be empty). This is much more reliable than the
+// account menu, which can report logged_in=0 even for working sessions.
+- (void)checkLibraryAuthWithCompletion:(void (^)(BOOL signedIn, NSError *error))completion {
+    if (![[LTAuth sharedAuth] signedIn]) {
+        if (completion) completion(NO, [self errorWithCode:5 message:@"Not signed in"]);
+        return;
+    }
+    NSDictionary *body = @{@"context": [self webRemixContext], @"browseId": @"FEmusic_liked_playlists"};
+    [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
+        if (error) {
+            if (completion) completion(NO, error);
+            return;
+        }
+        if (![json isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(NO, [self errorWithCode:2 message:@"Couldn't read YouTube's response."]);
+            return;
+        }
+        NSMutableArray *items = [NSMutableArray array];
+        NSMutableSet *seen = [NSMutableSet set];
+        [self collectLibraryPlaylistsFromResponse:json into:items seen:seen];
+        BOOL requiresSignIn = [self responseRequiresSignIn:json];
+        LTLog(@"AUTH library probe logged_in=%@ items=%d requiresSignIn=%d",
+              [self loggedInFlagForResponse:json] ?: @"?", (int)items.count, (int)requiresSignIn);
+        if (requiresSignIn) {
+            if (completion) completion(NO, [self errorWithCode:401
+                message:@"YouTube Music still treats this session as signed out. The cookie may be expired, copied from the wrong site, or tied to another network."]);
+            return;
+        }
+        if (completion) completion(YES, nil);
     }];
 }
 

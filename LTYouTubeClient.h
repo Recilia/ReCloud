@@ -49,8 +49,14 @@ extern NSString *const LTBrowserUserAgent;
 // Account listening history as LTTrack.
 - (void)fetchAccountHistoryWithCompletion:(void (^)(NSArray *tracks, NSError *error))completion;
 
-// Display name of the signed-in account.
+// Display name of the signed-in account (nil with no error when YouTube does
+// not expose it but the request is still authenticated).
 - (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion;
+
+// Lightweight sign-in probe: fetches just the first page of the account's
+// library playlists and reports whether YouTube treats the request as signed
+// in. Used to validate a pasted cookie instead of trusting that it was stored.
+- (void)checkLibraryAuthWithCompletion:(void (^)(BOOL signedIn, NSError *error))completion;
 
 // Mix/radio playlist ids (RD..., e.g. from home shelves) load through the
 // "next" endpoint rather than browse.

@@ -100,28 +100,37 @@
 }
 
 - (void)finishSignIn {
-    // Don't pop on the assumption that a cookie was captured: YouTube can
-    // reject it (expired, wrong account/domain, brand-account mismatch) and
-    // then the Library would keep saying "sign in" with no explanation.
+    // The account menu only supplies a display name; it is not a reliable
+    // sign-in test (YouTube can report logged_in=0 there while the library
+    // endpoints work). The first library page is the real check: a guest gets
+    // a "Sign in" card, an authenticated account gets its library.
+    self.title = @"Checking…";
+    self.navigationItem.rightBarButtonItem.enabled = NO;
+
     __weak LTSignInViewController *weakSelf = self;
-    [[LTYouTubeClient sharedClient] fetchAccountNameWithCompletion:^(NSString *name, NSError *error) {
+    [[LTYouTubeClient sharedClient] checkLibraryAuthWithCompletion:^(BOOL signedIn, NSError *error) {
         LTSignInViewController *strongSelf = weakSelf;
         if (!strongSelf) return;
+        strongSelf.title = @"Sign in";
+        strongSelf.navigationItem.rightBarButtonItem.enabled = YES;
 
-        if (name.length) {
-            [[LTAuth sharedAuth] updateAccountName:name];
-            LTLog(@"AUTH signed in as %@", name);
+        if (signedIn) {
+            LTLog(@"AUTH verified signed in");
+            // Name is cosmetic: fetch it without delaying the transition.
+            [[LTYouTubeClient sharedClient] fetchAccountNameWithCompletion:^(NSString *name, NSError *nameError) {
+                if (name.length) [[LTAuth sharedAuth] updateAccountName:name];
+            }];
             [strongSelf.navigationController popViewControllerAnimated:YES];
             return;
         }
 
-        LTLog(@"AUTH cookie rejected: %@", error);
+        LTLog(@"AUTH verification failed: %@", error);
         BOOL authRejected = (error.code == 401 || error.code == 403);
         if (authRejected) [[LTAuth sharedAuth] signOut];
 
         NSString *message;
         if (authRejected) {
-            message = @"YouTube Music rejected this cookie.\n\nCopy it again from a browser tab that is open on music.youtube.com while signed in (DevTools → Application → Cookies → music.youtube.com), and include the __Secure-3PAPISID cookie.";
+            message = @"YouTube Music still sees this request as signed out.\n\nMake sure you copied the cookie from a tab that is open on music.youtube.com while signed in, include the whole Cookie header (SID, HSID, SSID, APISID, SAPISID and __Secure-3PAPISID), and capture it while this iPhone is on the same Wi-Fi network as the browser (Google ties the session to the originating network).";
         } else {
             message = @"Couldn't reach YouTube Music to verify the cookie. Check the connection and tap Check again.";
             if (error.localizedDescription.length) {
