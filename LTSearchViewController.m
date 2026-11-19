@@ -76,6 +76,14 @@
         [self themeSearchBar];
         [self.view addSubview:self.searchBar];
 
+        // Search is a tab root and the keyboard covers most of the screen,
+        // so give it an explicit way back to Home.
+        self.navigationItem.leftBarButtonItem =
+            [[UIBarButtonItem alloc] initWithTitle:@"Home"
+                                             style:UIBarButtonItemStyleBordered
+                                            target:self
+                                            action:@selector(backToHomeTapped:)];
+
         NSArray *types = @[@"songs", @"videos", @"albums", @"artists"];
         NSUInteger defaultIndex = [types indexOfObject:self.type];
         if (defaultIndex == NSNotFound) defaultIndex = 0;
@@ -250,6 +258,17 @@
 }
 
 #pragma mark - Actions
+
+// Back out of search: drop the keyboard and land on the Home tab.
+- (void)backToHomeTapped:(id)sender {
+    [self.searchBar resignFirstResponder];
+    if (self.navigationController.viewControllers.count > 1) {
+        [self.navigationController popToRootViewControllerAnimated:YES];
+    }
+    if ((NSInteger)self.tabBarController.selectedIndex != 0) {
+        self.tabBarController.selectedIndex = 0;
+    }
+}
 
 - (void)showLocalPlaylists {
     [self.results removeAllObjects];

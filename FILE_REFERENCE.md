@@ -204,7 +204,8 @@ browsing past queries via `showSearchHistory` (recorded by `LTPlaylistStore`). R
 `LTTrackListViewController` (album/playlist) or `LTArtistViewController` (artist) and play videos
 directly; rows offer the shared song menu, an add-to-playlist picker, downloads, swipe/commit
 deletion for history rows, empty-state and toast messages, and live re-layout across appearance
-changes.
+changes. A `Home` bar button (`backToHomeTapped:`) drops the keyboard and switches to the Home
+tab, so the keyboard can never trap the user on this screen.
 
 ### `LTArtistViewController.h` / `LTArtistViewController.m`
 Artist page, constructed with `initWithBrowseId:title:`. `loadContent` calls
@@ -466,6 +467,8 @@ Application → Cookies) and a "Paste SAPISID cookie" button (`pasteTapped:` →
 that builds credentials from a bare token or a full cookie header. `tryAdoptCookies` harvests any
 Google cookies already in the shared cookie store into `LTAuth`; `finishSignIn` verifies the account
 via `fetchAccountNameWithCompletion:` and closes. `checkTapped:` manually retries cookie adoption.
+The bar leaves its left slot to the system back button (the screen is pushed from Settings) and
+only falls back to a `Close` item when it is a navigation root.
 
 ### `LTTransitionSettings.h` / `LTTransitionSettings.m`
 Reads/writes the transition speed multiplier stored in NSUserDefaults (key `LTTransitionSpeed`; 1.0
@@ -562,6 +565,9 @@ the legacy 32-bit .ipa via `make_legacy_ipa`, and the rootless deb via `make_roo
 (the rootless payload is the modern, letterbox-fixed app). Supports `--skip-ipas`/`--skip-debs`,
 prints an artifact table with human sizes, and archives everything into `versions/<version>/` with
 self-explanatory names (`ReinMusic-r<rev>-rootful.deb`, `-64bit.ipa`, `-32bit.ipa`, `-rootless.deb`).
+The same four files are then copied into the Downloads folder — `downloads_dir()` honours
+`REIN_DOWNLOADS_DIR`, otherwise uses the folder containing the repo when it is named `Downloads`,
+otherwise `~/Downloads` — so the newest build is always one double-click away.
 
 ### `make_legacy_ipa.py`
 Produces the legacy armv7-only sideload .ipa from the rootful deb. It reuses

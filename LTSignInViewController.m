@@ -31,17 +31,29 @@
     self.title = @"Sign in";
     self.view.backgroundColor = [LTTheme background];
 
-    UIBarButtonItem *pasteItem = [[UIBarButtonItem alloc] initWithTitle:@"Paste cookie"
-                                                                 style:UIBarButtonItemStyleBordered
-                                                                target:self
-                                                                action:@selector(pasteTapped:)];
-    self.navigationItem.leftBarButtonItem = pasteItem;
-
     UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"Check"
                                                                 style:UIBarButtonItemStyleDone
                                                                target:self
                                                                action:@selector(checkTapped:)];
-    self.navigationItem.rightBarButtonItem = doneItem;
+
+    // Leave the bar's left slot to the system back button: the screen is
+    // pushed from Settings and pasting has its own button below.
+    if (self.pasteOnly) {
+        UIBarButtonItem *pasteItem = [[UIBarButtonItem alloc] initWithTitle:@"Paste"
+                                                                     style:UIBarButtonItemStyleBordered
+                                                                    target:self
+                                                                    action:@selector(pasteTapped:)];
+        self.navigationItem.rightBarButtonItems = @[doneItem, pasteItem];
+    } else {
+        self.navigationItem.rightBarButtonItem = doneItem;
+    }
+    // A navigation root has nothing to pop to, so offer a Close button there.
+    if (!self.navigationController || self.navigationController.viewControllers.count <= 1) {
+        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Close"
+                                                                                 style:UIBarButtonItemStyleBordered
+                                                                                target:self
+                                                                                action:@selector(closeTapped:)];
+    }
 
     CGFloat width = self.view.bounds.size.width;
 
@@ -110,6 +122,14 @@
 }
 
 #pragma mark - Buttons
+
+- (void)closeTapped:(id)sender {
+    if (self.navigationController.viewControllers.count > 1) {
+        [self.navigationController popViewControllerAnimated:YES];
+    } else {
+        [self dismissViewControllerAnimated:YES completion:NULL];
+    }
+}
 
 - (void)checkTapped:(id)sender {
     if (![self tryAdoptCookies]) {

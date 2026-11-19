@@ -49,6 +49,10 @@ To build and install directly to a device over SSH:
 THEOS=/path/to/theos THEOS_DEVICE_IP=<ip> make package install
 ```
 
+`./make_release.py` builds all four distributables (rootful and rootless `.deb`, plus the
+64-bit and 32-bit `.ipa`) and copies them into `versions/<version>/` in the repo and into your
+Downloads folder.
+
 
 
 ## Syncing between two phones

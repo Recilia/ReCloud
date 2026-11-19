@@ -13,7 +13,9 @@ other three are derived from that same version so a release is always
 internally consistent.
 
 Every run also copies all four files into versions/<version>/ so each build
-is kept as an immutable, self-contained snapshot.
+is kept as an immutable, self-contained snapshot, and then into the Downloads
+folder (outside the repo) so the files you hand out are always the newest
+build. Set REIN_DOWNLOADS_DIR to send them somewhere else.
 
 Usage:
     ./make_release.py                 # make package, then build everything
@@ -39,6 +41,20 @@ import make_rootless_deb  # noqa: E402
 
 THEOS = Path(os.environ.get("THEOS", "/opt/theos"))
 PACKAGE = "com.legacymusic.app"
+
+
+def downloads_dir() -> Path:
+    """Folder every finished .ipa/.deb is copied into.
+
+    REIN_DOWNLOADS_DIR overrides it; otherwise the folder holding the repo is
+    used when it is named "Downloads", else ~/Downloads.
+    """
+    override = os.environ.get("REIN_DOWNLOADS_DIR")
+    if override:
+        return Path(override).expanduser()
+    if HERE.parent.name.lower() == "downloads":
+        return HERE.parent
+    return Path.home() / "Downloads"
 
 
 def newest_rootful_deb() -> Path:
@@ -143,6 +159,14 @@ def main() -> None:
 
     dest = archive(version, built)
     print(f"\n==> Archived {len(built)} file(s) to {dest}")
+    for _, _, _, archive_name in built:
+        print(f"      {archive_name}")
+
+    out = downloads_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    for _, path, _, archive_name in built:
+        shutil.copy2(path, out / archive_name)
+    print(f"\n==> Copied {len(built)} file(s) to {out}")
     for _, _, _, archive_name in built:
         print(f"      {archive_name}")
 
