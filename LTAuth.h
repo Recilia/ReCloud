@@ -26,6 +26,11 @@ extern NSString *const LTAuthDidChangeNotification;
 // Full "Cookie:" header value built from the captured Google cookies.
 @property (nonatomic, readonly, copy) NSString *cookieHeader;
 
+// YES when the stored cookie set includes LOGIN_INFO, which YouTube requires
+// alongside SAPISID to treat a request as signed in. A paste containing only
+// SAPISID can produce a valid hash but still be served as a guest.
+@property (nonatomic, readonly, assign) BOOL hasLoginInfo;
+
 // Builds credentials from a complete cookie header string (or a bare
 // SAPISID token). Pass accountName (may be nil) if known.
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader

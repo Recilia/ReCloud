@@ -126,18 +126,19 @@
 
         LTLog(@"AUTH verification failed: %@", error);
         BOOL authRejected = (error.code == 401 || error.code == 403);
-        if (authRejected) [[LTAuth sharedAuth] signOut];
 
         NSString *message;
-        if (authRejected) {
-            message = @"YouTube Music still sees this request as signed out.\n\nMake sure you copied the cookie from a tab that is open on music.youtube.com while signed in, include the whole Cookie header (SID, HSID, SSID, APISID, SAPISID and __Secure-3PAPISID), and capture it while this iPhone is on the same Wi-Fi network as the browser (Google ties the session to the originating network).";
+        if (![[LTAuth sharedAuth] hasLoginInfo]) {
+            message = @"The pasted cookie does not include LOGIN_INFO, so YouTube still serves this request as a guest.\n\nA single SAPISID value is no longer enough. In a desktop browser open music.youtube.com while signed in, open DevTools → Network → any request to music.youtube.com → Request Headers, copy the entire Cookie header (SID, HSID, SSID, APISID, SAPISID, __Secure-3PAPISID, LOGIN_INFO) and paste that.";
+        } else if (authRejected) {
+            message = @"YouTube Music still sees this request as signed out.\n\nMake sure the cookie was copied from a tab that is open on music.youtube.com while signed in, and capture it while this iPhone is on the same Wi-Fi network as the browser (Google ties the session to the originating network).\n\nThe pasted cookie has been kept, so you can retry from Settings → Account → Check account access.";
         } else {
-            message = @"Couldn't reach YouTube Music to verify the cookie. Check the connection and tap Check again.";
+            message = @"Couldn't reach YouTube Music to verify the cookie. Check the connection and tap Check again.\n\nThe pasted cookie has been kept.";
             if (error.localizedDescription.length) {
                 message = [message stringByAppendingFormat:@"\n\n%@", error.localizedDescription];
             }
         }
-        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Sign-in failed"
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Sign-in not confirmed"
                                                         message:message
                                                        delegate:nil
                                               cancelButtonTitle:@"OK"

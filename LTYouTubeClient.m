@@ -106,6 +106,49 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
 
 #pragma mark - Networking
 
+static NSString * const kLTVisitorDataKey = @"LTVisitorData";
+
+static NSString *LTCachedVisitorData(void) {
+    return [[NSUserDefaults standardUserDefaults] stringForKey:kLTVisitorDataKey];
+}
+
+static void LTStoreVisitorData(NSString *value) {
+    if (!value.length) return;
+    if ([LTCachedVisitorData() isEqualToString:value]) return;
+    [[NSUserDefaults standardUserDefaults] setObject:value forKey:kLTVisitorDataKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+// ytmusicapi and yt-dlp send the page's VISITOR_DATA with every InnerTube call.
+// Fetch it once from music.youtube.com's ytcfg and cache it; failure is
+// non-fatal (guest requests already work without it).
+- (void)ensureVisitorDataWithCompletion:(void (^)(void))completion {
+    if (LTCachedVisitorData().length) {
+        if (completion) completion();
+        return;
+    }
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:@"https://music.youtube.com/"]
+        cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+        timeoutInterval:12.0];
+    [request setValue:LTBrowserUserAgent forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"en-US,en;q=0.9" forHTTPHeaderField:@"Accept-Language"];
+    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue]
+                           completionHandler:^(NSURLResponse *response, NSData *data, NSError *error) {
+        NSString *html = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        if (html.length) {
+            NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:
+                @"\"VISITOR_DATA\"\\s*:\\s*\"([^\"]+)\"" options:0 error:nil];
+            NSTextCheckingResult *match = [regex firstMatchInString:html options:0
+                range:NSMakeRange(0, html.length)];
+            if (match.numberOfRanges > 1) {
+                LTStoreVisitorData([html substringWithRange:[match rangeAtIndex:1]]);
+            }
+        }
+        if (completion) completion();
+    }];
+}
+
 - (void)postToHost:(NSString *)host path:(NSString *)path body:(NSDictionary *)body
         completion:(void (^)(id json, NSError *error))completion {
     NSString *urlString = [NSString stringWithFormat:@"https://%@/youtubei/v1/%@?key=%@&prettyPrint=false",
@@ -123,6 +166,12 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     // the web client sends both and Google rejects the hash without Origin.
     [request setValue:origin forHTTPHeaderField:@"Origin"];
     [request setValue:origin forHTTPHeaderField:@"X-Origin"];
+    // WEB_REMIX is client 67. The web client always identifies itself with
+    // these headers; some responses use them to choose the signed-in layout.
+    [request setValue:@"67" forHTTPHeaderField:@"X-YouTube-Client-Name"];
+    [request setValue:@"1.20250721.00.00" forHTTPHeaderField:@"X-YouTube-Client-Version"];
+    NSString *visitorData = LTCachedVisitorData();
+    if (visitorData.length) [request setValue:visitorData forHTTPHeaderField:@"X-Goog-Visitor-Id"];
 
     if ([[LTAuth sharedAuth] signedIn]) {
         // Cookie-based InnerTube auth (SAPISIDHASH), same scheme the
@@ -135,6 +184,9 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
         // header with whatever happens to be in the shared store.
         [request setHTTPShouldHandleCookies:NO];
         [request setValue:@"0" forHTTPHeaderField:@"X-Goog-AuthUser"];
+        // The web client marks signed-in API calls so YouTube does not fall
+        // back to the guest layout.
+        [request setValue:@"true" forHTTPHeaderField:@"X-Youtube-Bootstrap-Logged-In"];
     }
 
     NSError *serializeError = nil;
@@ -167,6 +219,14 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
         if (!obj) {
             if (completion) completion(nil, parseError);
             return;
+        }
+        // Any response carries the visitor id; keep it for later requests.
+        if ([obj isKindOfClass:[NSDictionary class]]) {
+            id responseContext = [(NSDictionary *)obj objectForKey:@"responseContext"];
+            if ([responseContext isKindOfClass:[NSDictionary class]]) {
+                id visitor = [(NSDictionary *)responseContext objectForKey:@"visitorData"];
+                if ([visitor isKindOfClass:[NSString class]]) LTStoreVisitorData(visitor);
+            }
         }
         if (completion) completion(obj, nil);
     }];
@@ -642,12 +702,14 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     NSMutableArray *items = [NSMutableArray array];
     NSMutableSet *seen = [NSMutableSet set];
     NSMutableSet *visited = [NSMutableSet set];
-    [self fetchLibraryPlaylistsPageWithBody:body
-                                      items:items
-                                       seen:seen
-                                    visited:visited
-                                      pages:0
-                                 completion:completion];
+    [self ensureVisitorDataWithCompletion:^{
+        [self fetchLibraryPlaylistsPageWithBody:body
+                                          items:items
+                                           seen:seen
+                                        visited:visited
+                                          pages:0
+                                     completion:completion];
+    }];
 }
 
 - (void)fetchLibraryPlaylistsPageWithBody:(NSDictionary *)body
@@ -681,8 +743,11 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
         }
         NSUInteger before = items.count;
         [strongSelf collectLibraryPlaylistsFromResponse:json into:items seen:seen];
-        LTLog(@"LIB playlists page=%d new=%d total=%d", (int)pages, (int)(items.count - before), (int)items.count);
-        if (!items.count && [strongSelf responseRequiresSignIn:json]) {
+        NSString *loggedIn = [strongSelf loggedInFlagForResponse:json];
+        LTLog(@"LIB playlists page=%d new=%d total=%d logged_in=%@",
+              (int)pages, (int)(items.count - before), (int)items.count, loggedIn ?: @"?");
+        BOOL authenticated = [loggedIn isEqualToString:@"1"] || items.count > 0;
+        if (!authenticated && [strongSelf responseHasSignInPrompt:json]) {
             LTLog(@"LIB playlists response requires sign-in");
             if (completion) completion(nil, [strongSelf errorWithCode:401
                 message:@"YouTube Music asked for a sign-in. Paste a fresh cookie in Settings \u2192 Account."]);
@@ -861,6 +926,30 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     return nil;
 }
 
+// A stale cookie makes YouTube Music answer with a "Sign in" card instead of
+// an error, which used to look like an account with zero playlists. Only a
+// messageRenderer carrying signInEndpoint is that card: signed-in pages can
+// contain signInEndpoint elsewhere (menus/guide entries) and must not be
+// mistaken for a signed-out session.
+- (BOOL)responseHasSignInPrompt:(id)obj {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = obj;
+        id message = [dict objectForKey:@"messageRenderer"];
+        if ([message isKindOfClass:[NSDictionary class]] &&
+            [self responseRequiresSignIn:message]) {
+            return YES;
+        }
+        for (id value in [dict allValues]) {
+            if ([self responseHasSignInPrompt:value]) return YES;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            if ([self responseHasSignInPrompt:value]) return YES;
+        }
+    }
+    return NO;
+}
+
 // A stale cookie makes YouTube Music answer with a "Sign in" button instead
 // of an error, which used to look like an account with zero playlists.
 - (BOOL)responseRequiresSignIn:(id)obj {
@@ -997,7 +1086,8 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
         return;
     }
     NSDictionary *body = @{@"context": [self webRemixContext], @"browseId": @"FEmusic_liked_playlists"};
-    [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
+    [self ensureVisitorDataWithCompletion:^{
+        [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
         if (error) {
             if (completion) completion(NO, error);
             return;
@@ -1009,15 +1099,20 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
         NSMutableArray *items = [NSMutableArray array];
         NSMutableSet *seen = [NSMutableSet set];
         [self collectLibraryPlaylistsFromResponse:json into:items seen:seen];
-        BOOL requiresSignIn = [self responseRequiresSignIn:json];
-        LTLog(@"AUTH library probe logged_in=%@ items=%d requiresSignIn=%d",
-              [self loggedInFlagForResponse:json] ?: @"?", (int)items.count, (int)requiresSignIn);
-        if (requiresSignIn) {
-            if (completion) completion(NO, [self errorWithCode:401
-                message:@"YouTube Music still treats this session as signed out. The cookie may be expired, copied from the wrong site, or tied to another network."]);
+        NSString *loggedIn = [self loggedInFlagForResponse:json];
+        BOOL requiresSignIn = [self responseHasSignInPrompt:json];
+        LTLog(@"AUTH library probe logged_in=%@ items=%d signInPrompt=%d",
+              loggedIn ?: @"?", (int)items.count, (int)requiresSignIn);
+        BOOL authenticated = [loggedIn isEqualToString:@"1"] || items.count > 0;
+        if (!authenticated && requiresSignIn) {
+            NSString *reason = [[LTAuth sharedAuth] hasLoginInfo]
+                ? @"YouTube Music still treats this session as signed out. The cookie may be expired, copied from the wrong site, or tied to another network."
+                : @"The pasted cookie only contains SAPISID/APISID. YouTube now requires the full Cookie header, including LOGIN_INFO, SID, HSID and SSID.";
+            if (completion) completion(NO, [self errorWithCode:401 message:reason]);
             return;
         }
         if (completion) completion(YES, nil);
+        }];
     }];
 }
 

@@ -147,6 +147,10 @@ static NSString *LTAuthSanitizedCookieHeader(NSString *raw) {
     return [[NSUserDefaults standardUserDefaults] stringForKey:kLTAuthCookieHeader] ?: @"";
 }
 
+- (BOOL)hasLoginInfo {
+    return LTAuthCookieValueForName([self cookieHeader], @"LOGIN_INFO").length > 0;
+}
+
 - (NSString *)sapisid {
     NSString *header = [self cookieHeader];
     // ytmusicapi and the web client sign with __Secure-3PAPISID; fall back to
@@ -239,16 +243,17 @@ static NSString *LTAuthSanitizedCookieHeader(NSString *raw) {
     return YES;
 }
 
-- (NSString *)authorizationHeaderForOrigin:(NSString *)origin {
-    NSString *sapisid = [self sapisid];
-    if (!sapisid.length || !origin.length) return nil;
+- (void)addSidAuthorizationWithScheme:(NSString *)scheme
+                                  sid:(NSString *)sid
+                               origin:(NSString *)origin
+                                   to:(NSMutableArray *)out {
+    if (!sid.length) return;
 
-    NSTimeInterval interval = [[NSDate date] timeIntervalSince1970];
-    long long seconds = (long long)interval;
+    long long seconds = (long long)[[NSDate date] timeIntervalSince1970];
     // The web client hashes "<time> <SAPISID> <origin>" (SAPISID before the
     // origin). Getting this order wrong makes Google treat every request as
     // signed out, which is exactly what a "Sign in" card in the library means.
-    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, sapisid, origin];
+    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, sid, origin];
 
     unsigned char digest[CC_SHA1_DIGEST_LENGTH];
     NSData *data = [payload dataUsingEncoding:NSUTF8StringEncoding];
@@ -258,7 +263,28 @@ static NSString *LTAuthSanitizedCookieHeader(NSString *raw) {
     for (NSUInteger i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) {
         [hex appendFormat:@"%02x", digest[i]];
     }
-    return [NSString stringWithFormat:@"SAPISIDHASH %lld_%@", seconds, hex];
+    [out addObject:[NSString stringWithFormat:@"%@ %lld_%@", scheme, seconds, hex]];
+}
+
+- (NSString *)authorizationHeaderForOrigin:(NSString *)origin {
+    if (!origin.length) return nil;
+
+    NSString *header = [self cookieHeader];
+    NSString *sapisid = LTAuthCookieValueForName(header, @"SAPISID");
+    NSString *sapisid1 = LTAuthCookieValueForName(header, @"__Secure-1PAPISID");
+    NSString *sapisid3 = LTAuthCookieValueForName(header, @"__Secure-3PAPISID");
+    // YouTube falls back to __Secure-3PAPISID when SAPISID is absent.
+    if (!sapisid.length) sapisid = sapisid3;
+
+    // yt-dlp watches for three different schemes; some endpoints (notably
+    // music.youtube.com) only accept the secure 1P/3P variants. Send every
+    // variant the cookie set can produce, space separated.
+    NSMutableArray *authorizations = [NSMutableArray array];
+    [self addSidAuthorizationWithScheme:@"SAPISIDHASH" sid:sapisid origin:origin to:authorizations];
+    [self addSidAuthorizationWithScheme:@"SAPISID1PHASH" sid:sapisid1 origin:origin to:authorizations];
+    [self addSidAuthorizationWithScheme:@"SAPISID3PHASH" sid:sapisid3 origin:origin to:authorizations];
+    if (!authorizations.count) return nil;
+    return [authorizations componentsJoinedByString:@" "];
 }
 
 - (void)signOut {
