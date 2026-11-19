@@ -117,17 +117,23 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     [request setHTTPMethod:@"POST"];
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [request setValue:LTBrowserUserAgent forHTTPHeaderField:@"User-Agent"];
-    [request setValue:[NSString stringWithFormat:@"https://%@/", host] forHTTPHeaderField:@"Referer"];
+    NSString *origin = [NSString stringWithFormat:@"https://%@", host];
+    [request setValue:[NSString stringWithFormat:@"%@/", origin] forHTTPHeaderField:@"Referer"];
+    // The SAPISIDHASH is validated against the Origin header, not X-Origin;
+    // the web client sends both and Google rejects the hash without Origin.
+    [request setValue:origin forHTTPHeaderField:@"Origin"];
+    [request setValue:origin forHTTPHeaderField:@"X-Origin"];
 
     if ([[LTAuth sharedAuth] signedIn]) {
         // Cookie-based InnerTube auth (SAPISIDHASH), same scheme the
         // YouTube Music web client uses for signed-in users.
-        NSString *origin = [NSString stringWithFormat:@"https://%@", host];
         NSString *auth = [[LTAuth sharedAuth] authorizationHeaderForOrigin:origin];
         if (auth.length) [request setValue:auth forHTTPHeaderField:@"Authorization"];
         NSString *cookie = [[LTAuth sharedAuth] cookieHeader];
         if (cookie.length) [request setValue:cookie forHTTPHeaderField:@"Cookie"];
-        [request setValue:origin forHTTPHeaderField:@"X-Origin"];
+        // Don't let the URL loading system merge/replace the explicit Cookie
+        // header with whatever happens to be in the shared store.
+        [request setHTTPShouldHandleCookies:NO];
         [request setValue:@"0" forHTTPHeaderField:@"X-Goog-AuthUser"];
     }
 
@@ -143,6 +149,17 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
                            completionHandler:^(NSURLResponse *response, NSData *data, NSError *connectionError) {
         if (connectionError) {
             if (completion) completion(nil, connectionError);
+            return;
+        }
+        NSInteger status = [response isKindOfClass:[NSHTTPURLResponse class]]
+            ? [(NSHTTPURLResponse *)response statusCode] : 0;
+        if (status >= 400) {
+            LTLog(@"HTTP %d from %@/%@ (signed in: %d)", (int)status, host, path,
+                  (int)[[LTAuth sharedAuth] signedIn]);
+            NSString *message = (status == 401 || status == 403)
+                ? @"YouTube rejected the account cookie (HTTP 401). Paste a fresh cookie in Settings \u2192 Account."
+                : [NSString stringWithFormat:@"YouTube returned HTTP %d.", (int)status];
+            if (completion) completion(nil, [self errorWithCode:status message:message]);
             return;
         }
         NSError *parseError = nil;
@@ -881,19 +898,67 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     }];
 }
 
-// Display name of the signed-in Google account.
+// Depth-first lookup of the first value stored under `key`. The account menu
+// response has moved between popup headers and plain account headers over
+// time, so the name is located by key instead of by a fixed path.
+- (id)firstValueForKey:(NSString *)key inObject:(id)obj {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        id direct = [(NSDictionary *)obj objectForKey:key];
+        if (direct && ![direct isKindOfClass:[NSNull class]]) return direct;
+        for (id value in [(NSDictionary *)obj allValues]) {
+            id found = [self firstValueForKey:key inObject:value];
+            if (found && ![found isKindOfClass:[NSNull class]]) return found;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            id found = [self firstValueForKey:key inObject:value];
+            if (found && ![found isKindOfClass:[NSNull class]]) return found;
+        }
+    }
+    return nil;
+}
+
+// Display name of the signed-in Google account. Also acts as the sign-in
+// check: YouTube answers an expired/incorrect cookie with a sign-in prompt
+// instead of the account menu, which must be reported as an auth failure so
+// the Sign in screen does not claim success.
 - (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion {
     NSDictionary *body = @{@"context": [self webRemixContext]};
     [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body completion:^(id json, NSError *error) {
-        if (error || !json) {
+        if (error) {
             if (completion) completion(nil, error);
             return;
         }
-        NSString *name = LTPath(json, @"actions", @0, @"openPopupAction", @"popup",
-                                @"multiPageMenuRenderer", @"header", @"activeAccountHeaderRenderer",
-                                @"accountName", @"runs", @0, @"text", nil);
-        if (![name isKindOfClass:[NSString class]]) name = nil;
-        if (completion) completion(name, nil);
+        if (![json isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(nil, [self errorWithCode:2 message:@"Couldn't read the account response."]);
+            return;
+        }
+
+        id header = [self firstValueForKey:@"activeAccountHeaderRenderer" inObject:json];
+        NSString *name = nil;
+        if ([header isKindOfClass:[NSDictionary class]]) {
+            name = [self textFromTextObject:[(NSDictionary *)header objectForKey:@"accountName"]];
+            if (!name.length) name = [self textFromTextObject:[(NSDictionary *)header objectForKey:@"email"]];
+        }
+        if (!name.length) {
+            id accountName = [self firstValueForKey:@"accountName" inObject:json];
+            if ([accountName isKindOfClass:[NSDictionary class]]) {
+                name = [self textFromTextObject:accountName];
+            }
+        }
+
+        if (name.length) {
+            if (completion) completion(name, nil);
+            return;
+        }
+
+        if ([self responseRequiresSignIn:json]) {
+            if (completion) completion(nil, [self errorWithCode:401
+                message:@"YouTube Music did not accept the cookie. Copy it again from a browser tab that is open on music.youtube.com while signed in."]);
+        } else {
+            if (completion) completion(nil, [self errorWithCode:401
+                message:@"YouTube Music did not confirm the account. The cookie may belong to a different Google domain or be expired."]);
+        }
     }];
 }
 

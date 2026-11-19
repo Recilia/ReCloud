@@ -51,7 +51,7 @@
     self.hintLabel.numberOfLines = 4;
     self.hintLabel.textAlignment = NSTextAlignmentCenter;
     self.hintLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
-    self.hintLabel.text = @"Sign in to YouTube Music in a desktop browser, then\ncopy the SAPISID cookie value (DevTools → Application →\nCookies) and paste it here. A full Cookie header works too.";
+    self.hintLabel.text = @"Sign in to music.youtube.com in a desktop browser, then\ncopy the whole Cookie header (DevTools → Network → any request →\nRequest Headers → Cookie) and paste it here. Include\n__Secure-3PAPISID if it is listed.";
     [self.view addSubview:self.hintLabel];
 
     if (self.pasteOnly) {
@@ -100,12 +100,40 @@
 }
 
 - (void)finishSignIn {
+    // Don't pop on the assumption that a cookie was captured: YouTube can
+    // reject it (expired, wrong account/domain, brand-account mismatch) and
+    // then the Library would keep saying "sign in" with no explanation.
+    __weak LTSignInViewController *weakSelf = self;
     [[LTYouTubeClient sharedClient] fetchAccountNameWithCompletion:^(NSString *name, NSError *error) {
+        LTSignInViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+
         if (name.length) {
-            [[LTAuth sharedAuth] setCredentialsWithCookieHeader:[[LTAuth sharedAuth] cookieHeader]
-                                                    accountName:name];
+            [[LTAuth sharedAuth] updateAccountName:name];
+            LTLog(@"AUTH signed in as %@", name);
+            [strongSelf.navigationController popViewControllerAnimated:YES];
+            return;
         }
-        [self.navigationController popViewControllerAnimated:YES];
+
+        LTLog(@"AUTH cookie rejected: %@", error);
+        BOOL authRejected = (error.code == 401 || error.code == 403);
+        if (authRejected) [[LTAuth sharedAuth] signOut];
+
+        NSString *message;
+        if (authRejected) {
+            message = @"YouTube Music rejected this cookie.\n\nCopy it again from a browser tab that is open on music.youtube.com while signed in (DevTools → Application → Cookies → music.youtube.com), and include the __Secure-3PAPISID cookie.";
+        } else {
+            message = @"Couldn't reach YouTube Music to verify the cookie. Check the connection and tap Check again.";
+            if (error.localizedDescription.length) {
+                message = [message stringByAppendingFormat:@"\n\n%@", error.localizedDescription];
+            }
+        }
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Sign-in failed"
+                                                        message:message
+                                                       delegate:nil
+                                              cancelButtonTitle:@"OK"
+                                              otherButtonTitles:nil];
+        [alert show];
     }];
 }
 
@@ -125,7 +153,7 @@
 - (void)pasteTapped:(id)sender {
     if (!self.pasteAlert) {
         self.pasteAlert = [[UIAlertView alloc] initWithTitle:@"Paste credentials"
-                                                     message:@"Paste the SAPISID value or the full Cookie header copied from a desktop browser signed into YouTube Music."
+                                                     message:@"Paste the whole Cookie header from a desktop browser tab that is open on music.youtube.com while signed in. A bare __Secure-3PAPISID / SAPISID value also works."
                                                     delegate:self
                                            cancelButtonTitle:@"Cancel"
                                            otherButtonTitles:@"Save", nil];

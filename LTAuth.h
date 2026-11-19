@@ -5,7 +5,7 @@
 // so the app uses the cookie-based SAPISIDHASH scheme that the YouTube
 // Music web client itself uses:
 //
-//   Authorization: SAPISIDHASH <unix-time>_<sha1("<time> <origin> <SAPISID>")>
+//   Authorization: SAPISIDHASH <unix-time>_<sha1("<time> <SAPISID> <origin>")>
 //
 // The SAPISID cookie is pasted manually from a desktop browser signed into
 // YouTube Music (the in-app web login was removed; see LTSignInViewController).
@@ -19,7 +19,7 @@ extern NSString *const LTAuthDidChangeNotification;
 @property (nonatomic, readonly, assign) BOOL signedIn;
 @property (nonatomic, readonly, copy) NSString *accountName;
 
-// The APISID value used for SAPISIDHASH (SAPISID, then __Secure-3PAPISID,
+// The APISID value used for SAPISIDHASH (__Secure-3PAPISID, then SAPISID,
 // then __Secure-1PAPISID).
 @property (nonatomic, readonly, copy) NSString *sapisid;
 
@@ -30,6 +30,11 @@ extern NSString *const LTAuthDidChangeNotification;
 // SAPISID token). Pass accountName (may be nil) if known.
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
                            accountName:(NSString *)accountName;
+
+// Stores the display name discovered after the cookie has been validated.
+// Unlike setCredentials..., this does not post LTAuthDidChangeNotification,
+// so signing in does not trigger a second library fetch.
+- (void)updateAccountName:(NSString *)accountName;
 
 // Collects Google cookies already present in the shared cookie store (e.g.
 // left by another app or an older sign-in) and stores them. Returns YES if

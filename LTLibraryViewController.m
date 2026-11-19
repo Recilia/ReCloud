@@ -233,7 +233,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
         if (error) {
             LTLog(@"LIB account playlists error %@", error);
             strongSelf.accountError = (strongSelf.accountItems.count == 0);
-            if (strongSelf.accountError) {
+            if (strongSelf.accountError && strongSelf.view.window) {
                 UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Account Playlists"
                                                                 message:[error localizedDescription]
                                                                delegate:nil

@@ -46,6 +46,83 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
     return [cookieHeader substringWithRange:[match rangeAtIndex:2]];
 }
 
+// DevTools hands out a "Cookie: a=b; c=d" header, some browsers wrap long
+// values over several lines, and a copied Set-Cookie block also carries
+// attributes (path, domain, expires, ...). Normalise all of that down to
+// plain name=value pairs so the same paste works everywhere.
+static NSString *LTAuthSanitizedCookieHeader(NSString *raw) {
+    if (!raw.length) return nil;
+
+    // Work line by line so a whole "Request Headers" block also works: drop a
+    // leading "Cookie:" / "set-cookie:" label on each line, then treat the
+    // remaining lines as cookie pairs (other headers simply don't parse).
+    NSString *normalized = [raw stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    NSMutableArray *lines = [NSMutableArray array];
+    for (NSString *rawLine in [normalized componentsSeparatedByString:@"\n"]) {
+        NSString *line = [rawLine stringByReplacingOccurrencesOfString:@"\t" withString:@" "];
+        line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!line.length) continue;
+        NSRange colon = [line rangeOfString:@":"];
+        if (colon.location != NSNotFound) {
+            NSString *label = [[line substringToIndex:colon.location] lowercaseString];
+            label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if ([label isEqualToString:@"cookie"] || [label isEqualToString:@"set-cookie"]) {
+                line = [line substringFromIndex:colon.location + 1];
+            }
+        }
+        [lines addObject:line];
+    }
+    NSString *text = [lines componentsJoinedByString:@";"];
+
+    NSSet *attributes = [NSSet setWithObjects:@"path", @"domain", @"expires", @"max-age",
+                         @"secure", @"httponly", @"samesite", @"priority", @"version",
+                         @"comment", @"discard", @"port", nil];
+    NSMutableArray *pairs = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+
+    for (NSString *rawPart in [text componentsSeparatedByString:@";"]) {
+        NSString *part = [rawPart stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!part.length) continue;
+        NSRange eq = [part rangeOfString:@"="];
+        if (eq.location == NSNotFound) continue;
+
+        NSString *name = [[part substringToIndex:eq.location] stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *value = [[part substringFromIndex:eq.location + 1] stringByTrimmingCharactersInSet:
+                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!name.length || !value.length) continue;
+        if ([name rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound) continue;
+        if ([attributes containsObject:[name lowercaseString]]) continue;
+        // Browsers quote values; YouTube compares them unquoted.
+        if (value.length >= 2 && [value hasPrefix:@"\""] && [value hasSuffix:@"\""]) {
+            value = [value substringWithRange:NSMakeRange(1, value.length - 2)];
+        }
+        if ([seen containsObject:name]) continue;
+        [seen addObject:name];
+        [pairs addObject:[NSString stringWithFormat:@"%@=%@", name, value]];
+    }
+
+    if (!pairs.count) return nil;
+
+    // OpenID/SAPISIDHASH auth wants __Secure-3PAPISID; the older SAPISID
+    // pair carries the same value. Synthesize whichever is missing so a
+    // paste of either name works.
+    NSString *sapisid = nil;
+    NSString *secure = nil;
+    for (NSString *pair in pairs) {
+        if ([pair hasPrefix:@"SAPISID="]) sapisid = [pair substringFromIndex:8];
+        else if ([pair hasPrefix:@"__Secure-3PAPISID="]) secure = [pair substringFromIndex:18];
+    }
+    if (secure.length && !sapisid.length) {
+        [pairs addObject:[@"SAPISID=" stringByAppendingString:secure]];
+    } else if (sapisid.length && !secure.length) {
+        [pairs addObject:[@"__Secure-3PAPISID=" stringByAppendingString:sapisid]];
+    }
+
+    return [pairs componentsJoinedByString:@"; "];
+}
+
 @implementation LTAuth
 
 + (instancetype)sharedAuth {
@@ -72,8 +149,10 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
 
 - (NSString *)sapisid {
     NSString *header = [self cookieHeader];
-    NSString *value = LTAuthCookieValueForName(header, @"SAPISID");
-    if (!value.length) value = LTAuthCookieValueForName(header, @"__Secure-3PAPISID");
+    // ytmusicapi and the web client sign with __Secure-3PAPISID; fall back to
+    // the older names for cookies captured from browsers that omit it.
+    NSString *value = LTAuthCookieValueForName(header, @"__Secure-3PAPISID");
+    if (!value.length) value = LTAuthCookieValueForName(header, @"SAPISID");
     if (!value.length) value = LTAuthCookieValueForName(header, @"__Secure-1PAPISID");
     return value;
 }
@@ -81,6 +160,46 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
 - (void)notifyChange {
     [[NSNotificationCenter defaultCenter] postNotificationName:LTAuthDidChangeNotification
                                                         object:nil];
+}
+
+- (void)updateAccountName:(NSString *)accountName {
+    if (!accountName.length) return;
+    [[NSUserDefaults standardUserDefaults] setObject:accountName forKey:kLTAuthAccountName];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+// Mirrors the captured cookies into NSHTTPCookieStorage. Even though the
+// request sets an explicit Cookie header, the URL loading system is much more
+// reliable when the same cookies also exist in the shared store (and it keeps
+// them attached if a request has to be retried or redirected).
+- (void)installCookiesIntoSharedStorage {
+    NSString *header = [self cookieHeader];
+    if (!header.length) return;
+
+    NSHTTPCookieStorage *storage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+    storage.cookieAcceptPolicy = NSHTTPCookieAcceptPolicyAlways;
+
+    for (NSString *part in [header componentsSeparatedByString:@";"]) {
+        NSString *pair = [part stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSRange eq = [pair rangeOfString:@"="];
+        if (eq.location == NSNotFound) continue;
+        NSString *name = [pair substringToIndex:eq.location];
+        NSString *value = [pair substringFromIndex:eq.location + 1];
+        if (!name.length || !value.length) continue;
+
+        NSMutableDictionary *properties = [NSMutableDictionary dictionary];
+        [properties setObject:name forKey:NSHTTPCookieName];
+        [properties setObject:value forKey:NSHTTPCookieValue];
+        [properties setObject:@".youtube.com" forKey:NSHTTPCookieDomain];
+        [properties setObject:@"/" forKey:NSHTTPCookiePath];
+        [properties setObject:@"TRUE" forKey:NSHTTPCookieSecure];
+        [properties setObject:@"0" forKey:NSHTTPCookieVersion];
+        [properties setObject:[NSDate dateWithTimeIntervalSinceNow:365 * 24 * 60 * 60]
+                       forKey:NSHTTPCookieExpires];
+        NSHTTPCookie *cookie = [NSHTTPCookie cookieWithProperties:properties];
+        if (cookie) [storage setCookie:cookie];
+    }
 }
 
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
@@ -91,15 +210,17 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
 
     if ([trimmed rangeOfString:@"="].location == NSNotFound) {
         // A bare token: treat it as the SAPISID value and synthesize the
-        // cookie pair YouTube Music expects.
+        // cookie pairs YouTube Music expects.
         trimmed = [NSString stringWithFormat:@"SAPISID=%@; __Secure-3PAPISID=%@", trimmed, trimmed];
     }
 
-    [[NSUserDefaults standardUserDefaults] setObject:trimmed forKey:kLTAuthCookieHeader];
+    NSString *sanitized = LTAuthSanitizedCookieHeader(trimmed) ?: trimmed;
+    [[NSUserDefaults standardUserDefaults] setObject:sanitized forKey:kLTAuthCookieHeader];
     if (accountName.length) {
         [[NSUserDefaults standardUserDefaults] setObject:accountName forKey:kLTAuthAccountName];
     }
     [[NSUserDefaults standardUserDefaults] synchronize];
+    [self installCookiesIntoSharedStorage];
     [self notifyChange];
 }
 
@@ -124,7 +245,10 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
 
     NSTimeInterval interval = [[NSDate date] timeIntervalSince1970];
     long long seconds = (long long)interval;
-    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, origin, sapisid];
+    // The web client hashes "<time> <SAPISID> <origin>" (SAPISID before the
+    // origin). Getting this order wrong makes Google treat every request as
+    // signed out, which is exactly what a "Sign in" card in the library means.
+    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, sapisid, origin];
 
     unsigned char digest[CC_SHA1_DIGEST_LENGTH];
     NSData *data = [payload dataUsingEncoding:NSUTF8StringEncoding];
@@ -141,6 +265,17 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kLTAuthCookieHeader];
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kLTAuthAccountName];
     [[NSUserDefaults standardUserDefaults] synchronize];
+
+    // Drop the copies we mirrored into the shared cookie store as well.
+    NSHTTPCookieStorage *storage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+    NSArray *cookies = [[storage cookies] copy];
+    for (NSHTTPCookie *cookie in cookies) {
+        if (![LTAuthCookieWhitelist() containsObject:cookie.name]) continue;
+        if ([cookie.domain rangeOfString:@"youtube.com"].location == NSNotFound &&
+            [cookie.domain rangeOfString:@"google.com"].location == NSNotFound) continue;
+        [storage deleteCookie:cookie];
+    }
+
     [self notifyChange];
 }
 
