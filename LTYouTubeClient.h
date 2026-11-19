@@ -66,6 +66,13 @@ extern NSString *const LTBrowserUserAgent;
 - (void)loadImageWithURL:(NSString *)urlString
               completion:(void (^)(UIImage *image))completion;
 
+// Bounded on-disk artwork cache (32 MB / 400 images, oldest evicted first).
+// `diskArtworkCacheSize` reports the current footprint in bytes and
+// `clearDiskArtworkCache` empties it; both ignore playlist covers.
++ (unsigned long long)diskArtworkCacheSize;
++ (void)clearDiskArtworkCache;
++ (void)clearDiskArtworkCacheWithCompletion:(void (^)(void))completion;
+
 - (void)fetchLyricsForVideo:(NSString *)videoId
                  completion:(void (^)(NSString *lyricsText, NSError *error))completion;
 

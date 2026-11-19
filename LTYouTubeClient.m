@@ -37,6 +37,41 @@ static id LTPath(id root, id key, ...) {
 @property (nonatomic, strong) NSMutableDictionary *pendingNameAvatars;
 @end
 
+#pragma mark - Disk artwork cache limits
+
+// Every thumbnail the app displays (home shelves, search results, related
+// tracks, artist pages, ...) used to be written to disk forever, so simply
+// browsing could fill a 16 GB phone. The disk cache is now bounded: only the
+// MD5-named JPEGs created by -diskCachePathForURL: are managed here, and the
+// least recently used ones are dropped first. Playlist covers (cover-*.jpg)
+// live in the same directory but are owned by LTPlaylistStore and never
+// touched by this code.
+static const unsigned long long LTArtDiskCacheLimitBytes = 32ULL * 1024ULL * 1024ULL; // 32 MB
+static const NSUInteger LTArtDiskCacheLimitFiles = 400;
+static const NSUInteger LTArtDiskCacheWritesPerScan = 8;
+
+// Serial queue for JPEG encoding, writes and pruning. Keeping this work off
+// the main thread avoids scroll hitches when covers arrive in bursts.
+static dispatch_queue_t LTArtDiskCacheQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.legacymusic.artcache", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+// YES for cache entries only: 32 lowercase hex characters plus ".jpg".
+static BOOL LTIsManagedArtFileName(NSString *name) {
+    if (![name hasSuffix:@".jpg"]) return NO;
+    if ([name hasPrefix:@"cover-"]) return NO;
+    NSString *stem = [name stringByDeletingPathExtension];
+    if (stem.length != 32) return NO;
+    NSCharacterSet *nonHex =
+        [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    return [stem rangeOfCharacterFromSet:nonHex].location == NSNotFound;
+}
+
 @implementation LTYouTubeClient
 
 + (instancetype)sharedClient {
@@ -60,6 +95,11 @@ static id LTPath(id root, id key, ...) {
         _channelAvatarCache = [NSMutableDictionary dictionary];
         _pendingChannelAvatars = [NSMutableDictionary dictionary];
         _pendingNameAvatars = [NSMutableDictionary dictionary];
+        // Older builds wrote every cover to disk with no limit. Trim that
+        // backlog once on startup so existing installs get their space back.
+        dispatch_async(LTArtDiskCacheQueue(), ^{
+            [self pruneDiskArtworkCache];
+        });
     }
     return self;
 }
@@ -1758,6 +1798,18 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
         LTLog(@"IMG disk-hit url=%@", urlString);
         diskImage = LTTrimmedArtworkImage(diskImage, [urlString rangeOfString:@"i.ytimg.com"].location != NSNotFound);
         [self.imageCache setObject:diskImage forKey:urlString cost:LTDecodedImageCost(diskImage)];
+        // Refresh the timestamp (at most hourly) so covers that are actually
+        // being looked at survive eviction longer than untouched ones.
+        dispatch_async(LTArtDiskCacheQueue(), ^{
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSDictionary *attrs = [fm attributesOfItemAtPath:diskPath error:NULL];
+            NSDate *modified = [attrs objectForKey:NSFileModificationDate];
+            if (!modified || -[modified timeIntervalSinceNow] > 3600.0) {
+                [fm setAttributes:@{NSFileModificationDate: [NSDate date]}
+                     ofItemAtPath:diskPath
+                            error:NULL];
+            }
+        });
         if (completion) completion(diskImage);
         return;
     }
@@ -1800,8 +1852,15 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
         }
         image = LTTrimmedArtworkImage(image, [cacheKey rangeOfString:@"i.ytimg.com"].location != NSNotFound);
         [self.imageCache setObject:image forKey:cacheKey cost:LTDecodedImageCost(image)];
-        NSData *encoded = UIImageJPEGRepresentation(image, 0.85);
-        if (encoded) [encoded writeToFile:diskPath atomically:YES];
+        // Encode and cache on the artwork queue: JPEG-encoding a cover can take
+        // long enough on an iPhone 4S to stall scrolling. Pruning runs there
+        // too so the directory scan never blocks the interface.
+        dispatch_async(LTArtDiskCacheQueue(), ^{
+            NSData *encoded = UIImageJPEGRepresentation(image, 0.85);
+            if (encoded && [encoded writeToFile:diskPath atomically:YES]) {
+                [self pruneDiskArtworkCacheIfNeeded];
+            }
+        });
         // Always call completion on the main thread so UI updates work
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(image);
@@ -1832,6 +1891,96 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
         [hex appendFormat:@"%02x", digest[i]];
     }
     return [dir stringByAppendingPathComponent:[hex stringByAppendingString:@".jpg"]];
+}
+
+#pragma mark - Disk artwork cache maintenance
+
+// Oldest-first eviction until the cache is back under both limits. Runs on
+// LTArtDiskCacheQueue().
+- (void)pruneDiskArtworkCache {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = [[LTPlaylistStore sharedStore] artDirectory];
+    NSArray *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
+    if (![names isKindOfClass:[NSArray class]]) return;
+
+    NSMutableArray *entries = [NSMutableArray array];
+    unsigned long long total = 0;
+    for (NSString *name in names) {
+        if (!LTIsManagedArtFileName(name)) continue;
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:path error:NULL];
+        if (!attrs) continue;
+        unsigned long long size = [[attrs objectForKey:NSFileSize] unsignedLongLongValue];
+        NSDate *modified = [attrs objectForKey:NSFileModificationDate] ?: [NSDate distantPast];
+        [entries addObject:@{@"path": path, @"size": @(size), @"date": modified}];
+        total += size;
+    }
+    if (total <= LTArtDiskCacheLimitBytes && entries.count <= LTArtDiskCacheLimitFiles) return;
+
+    [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        NSComparisonResult result = [[a objectForKey:@"date"] compare:[b objectForKey:@"date"]];
+        if (result != NSOrderedSame) return result;
+        return [[a objectForKey:@"path"] compare:[b objectForKey:@"path"]];
+    }];
+
+    NSUInteger count = entries.count;
+    NSUInteger removed = 0;
+    for (NSDictionary *entry in entries) {
+        if (total <= LTArtDiskCacheLimitBytes && count <= LTArtDiskCacheLimitFiles) break;
+        if ([fm removeItemAtPath:[entry objectForKey:@"path"] error:NULL]) {
+            total -= [[entry objectForKey:@"size"] unsignedLongLongValue];
+            count -= 1;
+            removed += 1;
+        }
+    }
+    LTLog(@"IMG disk cache trimmed %d files, %llu KB left", (int)removed, total / 1024);
+}
+
+// Scanning after every write would stat the whole directory far too often;
+// once per handful of new covers is enough to keep the cache in bounds.
+- (void)pruneDiskArtworkCacheIfNeeded {
+    static NSUInteger writesSinceScan = 0;
+    writesSinceScan += 1;
+    if (writesSinceScan < LTArtDiskCacheWritesPerScan) return;
+    writesSinceScan = 0;
+    [self pruneDiskArtworkCache];
+}
+
++ (unsigned long long)diskArtworkCacheSize {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = [[LTPlaylistStore sharedStore] artDirectory];
+    NSArray *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
+    if (![names isKindOfClass:[NSArray class]]) return 0;
+    unsigned long long total = 0;
+    for (NSString *name in names) {
+        if (!LTIsManagedArtFileName(name)) continue;
+        NSDictionary *attrs = [fm attributesOfItemAtPath:[dir stringByAppendingPathComponent:name] error:NULL];
+        total += [[attrs objectForKey:NSFileSize] unsignedLongLongValue];
+    }
+    return total;
+}
+
++ (void)clearDiskArtworkCache {
+    [self clearDiskArtworkCacheWithCompletion:nil];
+}
+
++ (void)clearDiskArtworkCacheWithCompletion:(void (^)(void))completion {
+    LTYouTubeClient *client = [self sharedClient];
+    [[client imageCache] removeAllObjects];
+    dispatch_async(LTArtDiskCacheQueue(), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *dir = [[LTPlaylistStore sharedStore] artDirectory];
+        NSArray *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
+        NSUInteger removed = 0;
+        if ([names isKindOfClass:[NSArray class]]) {
+            for (NSString *name in names) {
+                if (!LTIsManagedArtFileName(name)) continue;
+                if ([fm removeItemAtPath:[dir stringByAppendingPathComponent:name] error:NULL]) removed += 1;
+            }
+        }
+        LTLog(@"IMG disk cache cleared (%d files)", (int)removed);
+        if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+    });
 }
 
 #pragma mark - Helpers

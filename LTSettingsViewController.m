@@ -15,6 +15,7 @@
 #import "LTDebugMenuViewController.h"
 #import "LTiPodViewController.h"
 #import "LTUpdater.h"
+#import "LTYouTubeClient.h"
 #import "LTAuth.h"
 #import "LTSignInViewController.h"
 #import "LTTheme.h"
@@ -217,6 +218,18 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     }
     [[NSNotificationCenter defaultCenter] postNotificationName:LTPlaylistsDidChangeNotification object:store];
     [self.tableView reloadData];
+}
+
+- (void)clearArtworkCacheTapped {
+    double mb = (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
+    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Clear Cached Artwork"
+                                                    message:[NSString stringWithFormat:
+                                @"Remove the %.1f MB of cached album art and thumbnails? They are downloaded again when needed. Offline downloads and playlist covers are not affected.", mb]
+                                                   delegate:self
+                                          cancelButtonTitle:@"Cancel"
+                                          otherButtonTitles:@"Clear", nil];
+    alert.tag = 905;
+    [alert show];
 }
 
 - (void)clearSearchHistoryTapped {
@@ -433,6 +446,12 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     if (alertView.tag == 904 && buttonIndex == 1) {
         [[LTAuth sharedAuth] signOut];
     }
+    if (alertView.tag == 905 && buttonIndex == 1) {
+        [LTYouTubeClient clearDiskArtworkCacheWithCompletion:^{
+            [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionData]
+                         withRowAnimation:UITableViewRowAnimationNone];
+        }];
+    }
     if (alertView.tag == 966 && buttonIndex == 1) {
         [self downloadUpdate];
         return;
@@ -517,7 +536,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionAccount: return 1;
         case LTSettingsSectionPlayback: return 2;
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
-        case LTSettingsSectionData: return 8;
+        case LTSettingsSectionData: return 9;
         case LTSettingsSectionAbout: return 2;
         case LTSettingsSectionCredits: return 4;
         case LTSettingsSectionBranding: return 2;
@@ -666,10 +685,16 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
                 cell.textLabel.text = @"Create Rein Mini Instance (BETA)";
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 5) {
-                cell.textLabel.text = @"Clear Offline Downloads";
+                cell.textLabel.text = @"Clear Cached Artwork";
+                double mb = (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f MB", mb];
                 cell.textLabel.textColor = [UIColor redColor];
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 6) {
+                cell.textLabel.text = @"Clear Offline Downloads";
+                cell.textLabel.textColor = [UIColor redColor];
+                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            } else if (indexPath.row == 7) {
                 cell.textLabel.text = @"Reset Listening Stats";
                 cell.textLabel.textColor = [UIColor redColor];
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
@@ -918,10 +943,12 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         } else if (indexPath.row == 4) {
             [self exportToWebTapped];
         } else if (indexPath.row == 5) {
-            [self clearDownloadsTapped];
+            [self clearArtworkCacheTapped];
         } else if (indexPath.row == 6) {
-            [self resetStatsTapped];
+            [self clearDownloadsTapped];
         } else if (indexPath.row == 7) {
+            [self resetStatsTapped];
+        } else if (indexPath.row == 8) {
             [self clearSearchHistoryTapped];
         }
         return;
