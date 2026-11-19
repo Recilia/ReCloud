@@ -608,82 +608,255 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     return urlString;
 }
 
-// The user's YouTube Music library playlists (grid). YouTube Music answers
-// this browse either as a grid of musicTwoRowItemRenderer tiles or as a
-// shelf of musicResponsiveListItemRenderer rows depending on the account's
-// layout, so both are parsed and merged.
+// The user's YouTube Music library playlists. YouTube Music serves this page
+// in whichever layout the account has been migrated to (a grid of
+// musicTwoRowItemRenderer tiles, a shelf of musicResponsiveListItemRenderer
+// rows, single- or two-column), returns only the first ~25 entries, and can
+// answer with a sign-in message when the stored cookie is stale. Items are
+// therefore collected recursively from both renderer types and the grid/shelf
+// continuations are followed until the whole library has been read.
 - (void)fetchLibraryPlaylistsWithCompletion:(void (^)(NSArray *items, NSError *error))completion {
     if (![[LTAuth sharedAuth] signedIn]) {
         if (completion) completion(nil, [self errorWithCode:5 message:@"Not signed in"]);
         return;
     }
     NSDictionary *body = @{@"context": [self webRemixContext], @"browseId": @"FEmusic_liked_playlists"};
+    NSMutableArray *items = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    NSMutableSet *visited = [NSMutableSet set];
+    [self fetchLibraryPlaylistsPageWithBody:body
+                                      items:items
+                                       seen:seen
+                                    visited:visited
+                                      pages:0
+                                 completion:completion];
+}
+
+- (void)fetchLibraryPlaylistsPageWithBody:(NSDictionary *)body
+                                    items:(NSMutableArray *)items
+                                     seen:(NSMutableSet *)seen
+                                  visited:(NSMutableSet *)visited
+                                    pages:(NSUInteger)pages
+                               completion:(void (^)(NSArray *items, NSError *error))completion {
+    // Guard against a malformed token chain looping forever. 40 pages is far
+    // beyond a realistic library (the page returns ~25 entries each).
+    if (pages >= 40) {
+        if (completion) completion(items, nil);
+        return;
+    }
     __weak LTYouTubeClient *weakSelf = self;
     [self postToHost:@"music.youtube.com" path:@"browse" body:body completion:^(id json, NSError *error) {
         LTYouTubeClient *strongSelf = weakSelf;
         if (!strongSelf) {
+            if (completion) completion(items, error);
+            return;
+        }
+        if (![json isKindOfClass:[NSDictionary class]]) {
+            // Keep whatever earlier pages produced; only fail when empty.
+            if (items.count) {
+                if (completion) completion(items, nil);
+                return;
+            }
+            if (!error) error = [strongSelf errorWithCode:2 message:@"Couldn't read the library response."];
             if (completion) completion(nil, error);
             return;
         }
-        if (error || !json) {
-            if (completion) completion(nil, error);
+        NSUInteger before = items.count;
+        [strongSelf collectLibraryPlaylistsFromResponse:json into:items seen:seen];
+        LTLog(@"LIB playlists page=%d new=%d total=%d", (int)pages, (int)(items.count - before), (int)items.count);
+        if (!items.count && [strongSelf responseRequiresSignIn:json]) {
+            LTLog(@"LIB playlists response requires sign-in");
+            if (completion) completion(nil, [strongSelf errorWithCode:401
+                message:@"YouTube Music asked for a sign-in. Paste a fresh cookie in Settings \u2192 Account."]);
             return;
         }
-        NSMutableArray *items = [NSMutableArray array];
-        NSMutableSet *seen = [NSMutableSet set];
-
-        // Grid layout: playlist tiles with a VL/PL browse id.
-        [strongSelf enumerateRenderersIn:json key:@"musicTwoRowItemRenderer" block:^(NSDictionary *it) {
-            NSString *browseId = LTPath(it, @"navigationEndpoint", @"browseEndpoint", @"browseId", nil);
-            if (![browseId isKindOfClass:[NSString class]]) return;
-            // The grid's first cell is the "New playlist" button — only
-            // real playlists carry a VL id.
-            if (![browseId hasPrefix:@"VL"] && ![browseId hasPrefix:@"PL"]) return;
-            NSString *title = [strongSelf textFromRuns:[it objectForKey:@"title"][@"runs"]];
-            if (!title.length) return;
-            LTBrowseItem *bi = [[LTBrowseItem alloc] init];
-            bi.kind = LTBrowseKindPlaylist;
-            bi.browseId = browseId;
-            bi.title = title;
-            bi.subtitle = [strongSelf textFromRuns:[it objectForKey:@"subtitle"][@"runs"]];
-            NSArray *thumbs = LTPath(it, @"thumbnailRenderer", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
-            bi.thumbnailURL = [strongSelf largestThumbnailURLFromArray:thumbs];
-            [seen addObject:[browseId hasPrefix:@"VL"] ? [browseId substringFromIndex:2] : browseId];
-            [items addObject:bi];
-        }];
-
-        // Shelf layout: responsive list rows (title in the first flex
-        // column, playlist id on the watch/browse endpoint).
-        [strongSelf enumerateRenderersIn:json key:@"musicResponsiveListItemRenderer" block:^(NSDictionary *it) {
-            NSString *playlistId = LTPath(it, @"navigationEndpoint", @"watchPlaylistEndpoint", @"playlistId", nil);
-            if (![playlistId isKindOfClass:[NSString class]]) {
-                playlistId = LTPath(it, @"navigationEndpoint", @"browseEndpoint", @"browseId", nil);
-            }
-            if (![playlistId isKindOfClass:[NSString class]]) return;
-            if (![playlistId hasPrefix:@"VL"] && ![playlistId hasPrefix:@"PL"]) return;
-            // Dedupe on the bare id so a playlist found by both layouts
-            // (and by either VL-prefixed or bare form) appears once.
-            NSString *dedupeKey = [playlistId hasPrefix:@"VL"] ? [playlistId substringFromIndex:2] : playlistId;
-            if (dedupeKey.length < 3 || [seen containsObject:dedupeKey]) return;
-            NSArray *flexColumns = [it objectForKey:@"flexColumns"];
-            if (![flexColumns isKindOfClass:[NSArray class]] || !flexColumns.count) return;
-            NSString *title = [strongSelf textFromRuns:[[strongSelf runsFromFlexColumn:[flexColumns objectAtIndex:0]] copy]];
-            if (!title.length) return;
-            LTBrowseItem *bi = [[LTBrowseItem alloc] init];
-            bi.kind = LTBrowseKindPlaylist;
-            bi.browseId = playlistId;
-            bi.title = title;
-            if (flexColumns.count > 1) {
-                bi.subtitle = [strongSelf textFromRuns:[strongSelf runsFromFlexColumn:[flexColumns objectAtIndex:1]]];
-            }
-            NSArray *thumbs = LTPath(it, @"thumbnail", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
-            bi.thumbnailURL = [strongSelf largestThumbnailURLFromArray:thumbs];
-            [seen addObject:dedupeKey];
-            [items addObject:bi];
-        }];
-
-        if (completion) completion(items, nil);
+        NSString *token = [strongSelf libraryContinuationTokenInResponse:json visited:visited];
+        if (!token.length) token = [strongSelf continuationTokenInObject:json visited:visited];
+        BOOL madeProgress = items.count > before;
+        if (!token.length || (pages > 0 && !madeProgress)) {
+            if (completion) completion(items, nil);
+            return;
+        }
+        [visited addObject:token];
+        NSDictionary *next = @{@"context": [strongSelf webRemixContext], @"continuation": token};
+        [strongSelf fetchLibraryPlaylistsPageWithBody:next
+                                                items:items
+                                                 seen:seen
+                                              visited:visited
+                                                pages:pages + 1
+                                           completion:completion];
     }];
+}
+
+// browse expects playlists as "VL"+id; library endpoints hand back either
+// form. Radio mixes (RD...) and album/artist ids are deliberately rejected.
+- (NSString *)normalizedLibraryPlaylistId:(NSString *)rawId {
+    if (![rawId isKindOfClass:[NSString class]] || rawId.length < 3) return nil;
+    if ([rawId hasPrefix:@"VL"]) {
+        NSString *bare = [rawId substringFromIndex:2];
+        if ([bare hasPrefix:@"PL"]) return rawId;
+        return nil;
+    }
+    if ([rawId hasPrefix:@"PL"]) {
+        return [@"VL" stringByAppendingString:rawId];
+    }
+    return nil;
+}
+
+// The playlist id sits in a different place in every layout (title run, tile
+// endpoint, watch-playlist endpoint, edit menu), so accept the first
+// browse/playlist id inside the tile that looks like a real playlist. Artist,
+// album and mix ids simply do not match.
+- (NSString *)libraryPlaylistIdInObject:(id)obj {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        for (NSString *key in @[@"browseId", @"playlistId"]) {
+            NSString *normalized = [self normalizedLibraryPlaylistId:[(NSDictionary *)obj objectForKey:key]];
+            if (normalized.length) return normalized;
+        }
+        for (id value in [(NSDictionary *)obj allValues]) {
+            NSString *found = [self libraryPlaylistIdInObject:value];
+            if (found.length) return found;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            NSString *found = [self libraryPlaylistIdInObject:value];
+            if (found.length) return found;
+        }
+    }
+    return nil;
+}
+
+- (NSString *)textFromTextObject:(NSDictionary *)textObject {
+    if (![textObject isKindOfClass:[NSDictionary class]]) return @"";
+    NSString *text = [self textFromRuns:[textObject objectForKey:@"runs"]];
+    if (!text.length) {
+        id simple = [textObject objectForKey:@"simpleText"];
+        if ([simple isKindOfClass:[NSString class]]) text = simple;
+    }
+    return text ?: @"";
+}
+
+- (void)collectLibraryPlaylistsFromResponse:(NSDictionary *)json
+                                       into:(NSMutableArray *)items
+                                       seen:(NSMutableSet *)seen {
+    // Grid layout: playlist tiles.
+    [self enumerateRenderersIn:json key:@"musicTwoRowItemRenderer" block:^(NSDictionary *it) {
+        NSString *title = [self textFromTextObject:[it objectForKey:@"title"]];
+        if (!title.length) return;
+        NSString *browseId = [self libraryPlaylistIdInObject:it];
+        if (!browseId.length) return;
+        NSString *dedupeKey = [browseId hasPrefix:@"VL"] ? [browseId substringFromIndex:2] : browseId;
+        if (!dedupeKey.length || [seen containsObject:dedupeKey]) return;
+        NSArray *thumbs = LTPath(it, @"thumbnailRenderer", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
+        if (![thumbs isKindOfClass:[NSArray class]] || !thumbs.count) {
+            thumbs = LTPath(it, @"thumbnail", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
+        }
+        LTBrowseItem *bi = [[LTBrowseItem alloc] init];
+        bi.kind = LTBrowseKindPlaylist;
+        bi.browseId = browseId;
+        bi.title = title;
+        bi.subtitle = [self textFromTextObject:[it objectForKey:@"subtitle"]];
+        bi.thumbnailURL = [self largestThumbnailURLFromArray:thumbs];
+        [seen addObject:dedupeKey];
+        [items addObject:bi];
+    }];
+
+    // Shelf layout: responsive list rows.
+    [self enumerateRenderersIn:json key:@"musicResponsiveListItemRenderer" block:^(NSDictionary *it) {
+        NSArray *flexColumns = [it objectForKey:@"flexColumns"];
+        if (![flexColumns isKindOfClass:[NSArray class]] || !flexColumns.count) return;
+        NSString *title = [self textFromRuns:[self runsFromFlexColumn:[flexColumns objectAtIndex:0]]];
+        if (!title.length) return;
+        NSString *browseId = [self libraryPlaylistIdInObject:it];
+        if (!browseId.length) return;
+        NSString *dedupeKey = [browseId hasPrefix:@"VL"] ? [browseId substringFromIndex:2] : browseId;
+        if (!dedupeKey.length || [seen containsObject:dedupeKey]) return;
+        LTBrowseItem *bi = [[LTBrowseItem alloc] init];
+        bi.kind = LTBrowseKindPlaylist;
+        bi.browseId = browseId;
+        bi.title = title;
+        if (flexColumns.count > 1) {
+            bi.subtitle = [self textFromRuns:[self runsFromFlexColumn:[flexColumns objectAtIndex:1]]];
+        }
+        NSArray *thumbs = LTPath(it, @"thumbnail", @"musicThumbnailRenderer", @"thumbnail", @"thumbnails", nil);
+        bi.thumbnailURL = [self largestThumbnailURLFromArray:thumbs];
+        [seen addObject:dedupeKey];
+        [items addObject:bi];
+    }];
+}
+
+// Prefer a token that belongs to the grid/shelf holding the playlists; the
+// page can also contain other shelves with their own continuation.
+- (NSString *)libraryContinuationTokenInResponse:(id)obj visited:(NSMutableSet *)visited {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        for (NSString *key in @[@"gridRenderer", @"musicShelfRenderer"]) {
+            id container = [(NSDictionary *)obj objectForKey:key];
+            if (![container isKindOfClass:[NSDictionary class]]) continue;
+            NSString *token = [self continuationTokenInObject:container visited:visited];
+            if (token.length) return token;
+        }
+        for (id value in [(NSDictionary *)obj allValues]) {
+            NSString *found = [self libraryContinuationTokenInResponse:value visited:visited];
+            if (found.length) return found;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            NSString *found = [self libraryContinuationTokenInResponse:value visited:visited];
+            if (found.length) return found;
+        }
+    }
+    return nil;
+}
+
+// Finds the next page token anywhere in a browse response. Handles both the
+// old `continuations[].next*ContinuationData` shape and the 2025
+// `continuationItemRenderer.continuationEndpoint.continuationCommand.token`.
+- (NSString *)continuationTokenInObject:(id)obj visited:(NSMutableSet *)visited {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = obj;
+        id command = [dict objectForKey:@"continuationCommand"];
+        if ([command isKindOfClass:[NSDictionary class]]) {
+            id token = [command objectForKey:@"token"];
+            if ([token isKindOfClass:[NSString class]] && [token length] && ![visited containsObject:token]) {
+                return token;
+            }
+        }
+        for (NSString *key in @[@"nextContinuationData", @"nextGridContinuationData",
+                                @"nextMusicShelfContinuationData"]) {
+            id data = [dict objectForKey:key];
+            if (![data isKindOfClass:[NSDictionary class]]) continue;
+            id token = [data objectForKey:@"continuation"];
+            if ([token isKindOfClass:[NSString class]] && [token length] && ![visited containsObject:token]) {
+                return token;
+            }
+        }
+        for (id value in [dict allValues]) {
+            NSString *found = [self continuationTokenInObject:value visited:visited];
+            if (found.length) return found;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            NSString *found = [self continuationTokenInObject:value visited:visited];
+            if (found.length) return found;
+        }
+    }
+    return nil;
+}
+
+// A stale cookie makes YouTube Music answer with a "Sign in" button instead
+// of an error, which used to look like an account with zero playlists.
+- (BOOL)responseRequiresSignIn:(id)obj {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        if ([(NSDictionary *)obj objectForKey:@"signInEndpoint"]) return YES;
+        for (id value in [(NSDictionary *)obj allValues]) {
+            if ([self responseRequiresSignIn:value]) return YES;
+        }
+    } else if ([obj isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)obj) {
+            if ([self responseRequiresSignIn:value]) return YES;
+        }
+    }
+    return NO;
 }
 
 // Account listening history (reverse chronological).

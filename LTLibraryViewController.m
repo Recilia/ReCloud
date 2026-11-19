@@ -40,6 +40,8 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 @property (nonatomic, assign) BOOL accountLoading;
 @property (nonatomic, assign) BOOL accountError;
 @property (nonatomic, assign) BOOL accountRefreshed;
+@property (nonatomic, strong) NSDate *lastAccountRefresh;
+@property (nonatomic, strong) UIRefreshControl *refreshControl;
 @property (nonatomic, strong) LTTrack *pendingRemoveTrack;
 @property (nonatomic, assign) BOOL ignorePlaylistChanges;
 @property (nonatomic, strong) NSMutableSet *attemptedArtistAvatars;
@@ -95,6 +97,12 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [LTTheme background];
     [self.view addSubview:self.tableView];
+
+    // Pull down to re-scan the YouTube Music library (picks up playlists that
+    // were added on another device since the last launch).
+    self.refreshControl = [[UIRefreshControl alloc] init];
+    [self.refreshControl addTarget:self action:@selector(pullToRefresh:) forControlEvents:UIControlEventValueChanged];
+    [self.tableView addSubview:self.refreshControl];
     // Hold a downloaded-song row (Songs segment) to open the song menu;
     // a vertical drag still scrolls.
     __weak LTLibraryViewController *weakSelf = self;
@@ -158,12 +166,20 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     NSMutableArray *items = [NSMutableArray array];
     for (NSDictionary *dict in saved) {
         if (![dict isKindOfClass:[NSDictionary class]]) continue;
+        id rawId = [dict objectForKey:@"browseId"];
+        if (![rawId isKindOfClass:[NSString class]]) continue;
+        NSString *browseId = rawId;
+        // Older builds cached bare "PL..." ids; browse wants "VLPL...".
+        if ([browseId hasPrefix:@"PL"]) browseId = [@"VL" stringByAppendingString:browseId];
         LTBrowseItem *item = [[LTBrowseItem alloc] init];
         item.kind = LTBrowseKindPlaylist;
-        item.browseId = [dict objectForKey:@"browseId"];
-        item.title = [dict objectForKey:@"title"];
-        item.subtitle = [dict objectForKey:@"subtitle"];
-        item.thumbnailURL = [dict objectForKey:@"thumb"];
+        item.browseId = browseId;
+        id title = [dict objectForKey:@"title"];
+        id subtitle = [dict objectForKey:@"subtitle"];
+        id thumb = [dict objectForKey:@"thumb"];
+        item.title = [title isKindOfClass:[NSString class]] ? title : nil;
+        item.subtitle = [subtitle isKindOfClass:[NSString class]] ? subtitle : nil;
+        item.thumbnailURL = [thumb isKindOfClass:[NSString class]] ? thumb : nil;
         if (item.browseId.length && item.title.length) [items addObject:item];
     }
     self.accountItems = items;
@@ -184,9 +200,10 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
     return [[LTAuth sharedAuth] signedIn];
 }
 
-// Refreshes the account playlists once per session (and after each sign-in).
-// On failure the cached copy stays visible; the error state is only shown when
-// there is nothing cached at all. A user tap on the retry row forces a retry.
+// Refreshes the account playlists once per session, and retries on later
+// visits when the previous attempt produced nothing (the first request can
+// run before the network/cookie is ready). On failure the cached copy stays
+// visible; the error state is only shown when there is nothing cached at all.
 - (void)refreshAccountPlaylists {
     [self refreshAccountPlaylistsForced:NO];
 }
@@ -194,7 +211,13 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
 - (void)refreshAccountPlaylistsForced:(BOOL)force {
     if (!self.signedIn) return;
     if (self.accountLoading) return;
-    if (self.accountRefreshed && !force) return;
+    if (self.accountRefreshed && !force) {
+        if (self.accountItems.count) return;
+        // Don't hammer YouTube on every tab switch when the account really has
+        // no playlists: retry an empty result at most every two minutes.
+        if (self.lastAccountRefresh &&
+            -[self.lastAccountRefresh timeIntervalSinceNow] < 120.0) return;
+    }
     self.accountLoading = YES;
     self.accountError = NO;
     [self reloadForSegment];
@@ -206,16 +229,36 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
         if (!strongSelf) return;
         strongSelf.accountLoading = NO;
         strongSelf.accountRefreshed = YES;
+        strongSelf.lastAccountRefresh = [NSDate date];
         if (error) {
             LTLog(@"LIB account playlists error %@", error);
             strongSelf.accountError = (strongSelf.accountItems.count == 0);
+            if (strongSelf.accountError) {
+                UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Account Playlists"
+                                                                message:[error localizedDescription]
+                                                               delegate:nil
+                                                      cancelButtonTitle:@"OK"
+                                                      otherButtonTitles:nil];
+                [alert show];
+            }
         } else {
             strongSelf.accountItems = [items mutableCopy] ?: [NSMutableArray array];
             strongSelf.accountError = NO;
             [strongSelf saveAccountCache];
         }
         [strongSelf reloadForSegment];
+        [strongSelf.refreshControl endRefreshing];
     }];
+}
+
+- (void)pullToRefresh:(id)sender {
+    [self reloadModels];
+    [self reloadForSegment];
+    if (self.currentSegment == LTLibrarySegmentPlaylists && self.signedIn) {
+        [self refreshAccountPlaylistsForced:YES];
+    } else {
+        [self.refreshControl endRefreshing];
+    }
 }
 
 - (void)authDidChange:(NSNotification *)notification {
@@ -355,7 +398,7 @@ typedef NS_ENUM(NSInteger, LTLibrarySegment) {
             return;
         }
         self.emptyLabel.text = self.signedIn
-            ? @"No playlists found on your account.\nTap + to create one on this device."
+            ? @"No playlists found on your account.\nPull down to refresh, or tap + to create one on this device."
             : @"No playlists yet.\nTap + to create one, or sign in from Settings to see your account playlists.";
         self.emptyLabel.hidden = NO;
         return;
