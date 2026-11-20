@@ -580,15 +580,17 @@ static id LTWKHTTPCookieStore(void) {
 
     __weak LTSignInViewController *weakSelf = self;
     [[LTYouTubeClient sharedClient] fetchAccountNameWithCookieHeader:cookieHeader
-                                                         completion:^(NSString *name, NSError *error) {
+                                                        diagnostics:^(NSString *name, NSString *detail, NSError *error) {
         LTSignInViewController *strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf.validating = NO;
         if (strongSelf.finished) return;
 
         if (!name.length) {
-            // Keep whatever was already signed in and stay on the page.
-            LTLog(@"AUTH web sign-in cookie not accepted yet: %@", error);
+            // Keep whatever was already signed in and stay on the page. The
+            // check line (status, logged_in, header) is what an explicit Check
+            // leaves behind once the page is gone.
+            LTLog(@"AUTH web sign-in cookie not accepted yet: %@ (%@)", detail, error);
             strongSelf.hintLabel.text = @"Not signed in yet. Finish on the page, or use Cookies Sign-In.";
             return;
         }

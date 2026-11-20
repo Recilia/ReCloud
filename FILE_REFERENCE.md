@@ -155,7 +155,7 @@ playlist result kinds); browsing (`browseAlbum`, `browsePlaylist`, `browseArtist
 info/subtitle/thumbnail extraction and artist top-songs/albums shelf parsing; channel avatar
 resolution (`channelAvatarURLForBrowseId:`, `resolveArtistAvatarForName:`); trending songs via the
 music charts; authenticated content (`fetchHomeRecommendations`, `fetchLibraryPlaylists`,
-`fetchAccountHistory`, `fetchAccountName`, `fetchAccountNameWithCookieHeader:completion:`); mix/radio
+`fetchAccountHistory`, `fetchAccountNameWithCookieHeader:diagnostics:`); mix/radio
 playlists via the `next` endpoint; streaming
 (`streamURLForVideo:` → `fetchStreamURLWithContext:` hitting the `player` endpoint with a fallback
 chain ANDROID → ANDROID_VR → IOS, preferring adaptive audio itags 141/140/139 (256/128/48 kbps) and
@@ -171,6 +171,21 @@ deep path: `LTAccountNameFromAccountMenu` reads `activeAccountHeaderRenderer.acc
 `LTFindFirstValueForKey` finds the header (string, `simpleText` or `runs`) and accepts
 `serviceTrackingParams`' `logged_in=1` as proof of a resolved session, so a response version that
 formats the name differently cannot turn a working cookie into "did not work".
+
+The account check is also self-reporting. `postToHost:path:body:cookieHeader:responseBlock:` is the
+single request primitive — it hands back the `NSHTTPURLResponse` status code and the raw body text,
+with `postToHost:path:body:completion:` the only wrapper (it drops them) — and
+`LTAccountMenuDetail` condenses one check into a single line: `HTTP <status>`, `logged_in: <value>`
+(or `absent`), `account header: returned|none`, and the resolved `name` when there is one. When no
+response arrived it says `no response (<domain> <code>) <description>` instead, and when the body was
+not JSON at all it appends the first 100 characters of the body, so a sign-in wall or an HTML error
+page can be told apart from a cookie YouTube simply did not accept. The check only ever runs against a
+candidate header: the app never asks the server for the account name on its own, because Settings and
+Home read `[LTAuth sharedAuth].accountName` from storage, so there is no stored-credential variant to
+maintain. The line is logged on both paths
+(`AUTH account check accepted: …` / `AUTH account check rejected: …`, and on the web route
+`AUTH web sign-in cookie not accepted yet: <detail> (<error>)`) and, for a pasted cookie, also put on
+the failure alert as `Server said: <detail>.`.
 
 ### `LTAuth.h` / `LTAuth.m`
 Singleton holding Google account credentials for authenticated InnerTube calls, using the same
@@ -544,7 +559,7 @@ sign-in pops back to Settings rather than to this dead end.
 WebKit is never linked: the armv7 SDK has it only as a private framework, so `LTEnsureWebKitLoaded`
 dlopens it on demand on the iOS 11+ path and iOS 6-10 launches never touch it. `viewWillDisappear:` stops the cookie poll timer. The cookie route has its own screen,
 `LTCookieSignInViewController`. `startCookieCheck:` is the single write path for the web route: it calls
-`fetchAccountNameWithCookieHeader:` with the candidate, ignores a candidate it has already asked about
+`fetchAccountNameWithCookieHeader:diagnostics:` with the candidate, ignores a candidate it has already asked about
 (`lastCheckedHeader`) and refuses to overlap checks (`validating`). That dedupe is skipped when
 `forceNextCheck` is set — a one-shot flag `checkTapped:` arms, which survives the asynchronous WK
 adopt hop so an explicit Check retries a set the poll already rejected, while the poll itself keeps
@@ -558,10 +573,13 @@ Cookie sign-in GUI (Settings → Account → Cookies Sign-In). A `UITextView` ta
 Music cookie line (the hint and placeholder ask for `SID=…; HSID=…; SAPISID=…`), with a placeholder overlay (`textViewDidChange:`) and keyboard insets
 on a `UIScrollView` (`keyboardWillShow:` / `keyboardWillHide:`). `signInTapped:` rejects empty input and
 then validates before storing: the candidate header goes through
-`fetchAccountNameWithCookieHeader:` (which authenticates that one request with it, via
-`postToHost:path:body:cookieHeader:completion:`) and only a name coming back lets
+`fetchAccountNameWithCookieHeader:diagnostics:` (which authenticates that one request with it, via
+`postToHost:path:body:cookieHeader:responseBlock:`) and only a name coming back lets
 `setCredentialsWithCookieHeader:accountName:` replace the stored credentials. A rejected paste shows
-an alert and leaves an existing sign-in untouched; when `cookieHeaderHasSession:` is NO the alert says
+an alert and leaves an existing sign-in untouched; the alert always carries the check line the client
+reported, as `Server said: HTTP <status>, logged_in: <value>, account header: <state>.`, because that
+is the difference between a cookie YouTube refused, a request that never left the phone, and a
+response that was not the account menu at all. When `cookieHeaderHasSession:` is NO the alert says
 the whole cookie line rather than the generic failure text: it reports that no account came back and
 points at the fuller paste, without asserting that what was pasted is wrong (nothing has established
 that a lone SAPISID cannot work, only that the server returned no account for it here). A good cookie

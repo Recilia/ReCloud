@@ -49,14 +49,15 @@ extern NSString *const LTBrowserUserAgent;
 // Account listening history as LTTrack.
 - (void)fetchAccountHistoryWithCompletion:(void (^)(NSArray *tracks, NSError *error))completion;
 
-// Display name of the signed-in account.
-- (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion;
-
-// Same check, authenticated with a candidate cookie header instead of the
-// stored one. Nothing is saved by this call; a name back means the cookie
-// works. Used to validate a paste before it replaces a working sign-in.
+// The account check, authenticated with a candidate cookie header instead of the
+// stored one (nil uses the stored credentials). Nothing is saved by this call; a
+// name back means the cookie works. `detail` reports what the account endpoint
+// answered on one line: the HTTP status (or the transport error when there was
+// no response), the logged_in flag and whether an account header came back, so a
+// failed sign-in can be diagnosed without a console. Both callbacks run on the
+// main queue; `detail` is never nil.
 - (void)fetchAccountNameWithCookieHeader:(NSString *)cookieHeader
-                              completion:(void (^)(NSString *name, NSError *error))completion;
+                             diagnostics:(void (^)(NSString *name, NSString *detail, NSError *error))completion;
 
 // Mix/radio playlist ids (RD..., e.g. from home shelves) load through the
 // "next" endpoint rather than browse.

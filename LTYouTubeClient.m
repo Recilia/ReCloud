@@ -97,6 +97,45 @@ static NSString *LTAccountNameFromAccountMenu(id json) {
     return found.length ? found : @"Google account";
 }
 
+// What the account endpoint actually answered, on one line: the HTTP status (or
+// the transport error when nothing came back), the logged_in flag, and whether
+// an account header was present. A short body excerpt is included when the
+// response was not JSON at all, which is what separates a sign-in wall or an
+// HTML error page from a cookie YouTube simply did not accept.
+static NSString *LTAccountMenuDetail(NSInteger statusCode, id json, NSString *bodyText,
+                                     NSString *name, NSError *error) {
+    NSMutableString *detail = [NSMutableString string];
+    if (error) {
+        [detail appendFormat:@"no response (%@ %ld)", [error domain], (long)[error code]];
+        if (error.localizedDescription.length) {
+            [detail appendFormat:@" %@", error.localizedDescription];
+        }
+    } else {
+        [detail appendFormat:@"HTTP %ld", (long)statusCode];
+    }
+    if (!json) {
+        NSString *snippet = bodyText;
+        snippet = [snippet stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+        snippet = [snippet stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+        snippet = [snippet stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (snippet.length > 100) {
+            snippet = [[snippet substringToIndex:100] stringByAppendingString:@"…"];
+        }
+        [detail appendFormat:@", body: %@", snippet.length ? snippet : @"empty"];
+        return detail;
+    }
+    // serviceTrackingParams stores it as the string "1"/"0"; a numeric shape is
+    // still reported verbatim rather than as absent.
+    id flag = LTFindFirstValueForKey(json, @"logged_in", 0);
+    BOOL flagKnown = [flag isKindOfClass:[NSString class]] || [flag isKindOfClass:[NSNumber class]];
+    NSString *flagText = flagKnown ? [flag description] : nil;
+    [detail appendFormat:@", logged_in: %@", flagText.length ? flagText : @"absent"];
+    BOOL hasHeader = LTFindFirstValueForKey(json, @"activeAccountHeaderRenderer", 0) != nil;
+    [detail appendFormat:@", account header: %@", hasHeader ? @"returned" : @"none"];
+    if (name.length) [detail appendFormat:@", name: %@", name];
+    return detail;
+}
+
 @interface LTYouTubeClient ()
 @property (nonatomic, strong) NSCache *imageCache;
 @property (nonatomic, strong) NSMutableDictionary *channelAvatarCache;
@@ -175,14 +214,20 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
 
 - (void)postToHost:(NSString *)host path:(NSString *)path body:(NSDictionary *)body
         completion:(void (^)(id json, NSError *error))completion {
-    [self postToHost:host path:path body:body cookieHeader:nil completion:completion];
+    [self postToHost:host path:path body:body cookieHeader:nil
+       responseBlock:^(id json, NSInteger statusCode, NSString *bodyText, NSError *error) {
+        if (completion) completion(json, error);
+    }];
 }
 
-// cookieHeader overrides the stored credentials for this one request, which is
-// how a pasted cookie is checked before it is saved. nil means "use LTAuth".
+// The one request primitive. cookieHeader overrides the stored credentials for
+// this single request, which is how a pasted cookie is checked before it is saved
+// (nil means "use LTAuth"). The HTTP status and the raw body text come back too:
+// the account check needs them to report what the server actually said, since a
+// 403 sign-in wall and an empty 200 are very different failures.
 - (void)postToHost:(NSString *)host path:(NSString *)path body:(NSDictionary *)body
       cookieHeader:(NSString *)cookieHeader
-        completion:(void (^)(id json, NSError *error))completion {
+     responseBlock:(void (^)(id json, NSInteger statusCode, NSString *bodyText, NSError *error))completion {
     NSString *urlString = [NSString stringWithFormat:@"https://%@/youtubei/v1/%@?key=%@&prettyPrint=false",
                            host, path, LTAPIKey];
     NSURL *url = [NSURL URLWithString:urlString];
@@ -219,24 +264,27 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     NSError *serializeError = nil;
     NSData *payload = [NSJSONSerialization dataWithJSONObject:body options:0 error:&serializeError];
     if (!payload) {
-        if (completion) completion(nil, serializeError);
+        if (completion) completion(nil, 0, nil, serializeError);
         return;
     }
     [request setHTTPBody:payload];
 
     [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue]
                            completionHandler:^(NSURLResponse *response, NSData *data, NSError *connectionError) {
+        NSInteger statusCode = [response isKindOfClass:[NSHTTPURLResponse class]]
+                             ? [(NSHTTPURLResponse *)response statusCode] : 0;
+        NSString *bodyText = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
         if (connectionError) {
-            if (completion) completion(nil, connectionError);
+            if (completion) completion(nil, statusCode, bodyText, connectionError);
             return;
         }
         NSError *parseError = nil;
         id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
         if (!obj) {
-            if (completion) completion(nil, parseError);
+            if (completion) completion(nil, statusCode, bodyText, parseError);
             return;
         }
-        if (completion) completion(obj, nil);
+        if (completion) completion(obj, statusCode, bodyText, nil);
     }];
 }
 
@@ -793,35 +841,24 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     }];
 }
 
-// Display name of the signed-in Google account.
-- (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion {
-    NSDictionary *body = @{@"context": [self webRemixContext]};
-    [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body completion:^(id json, NSError *error) {
-        if (error || !json) {
-            if (completion) completion(nil, error);
-            return;
-        }
-        NSString *name = LTAccountNameFromAccountMenu(json);
-        if (!name.length) LTLog(@"AUTH account menu returned no account header");
-        if (completion) completion(name, nil);
-    }];
-}
-
-// Same call, but authenticated with a candidate cookie header instead of the
-// stored one, so it can be validated before it replaces a working sign-in.
+// The account check. A candidate cookie header authenticates just this request,
+// so a paste can be validated before it replaces a working sign-in; nil uses the
+// stored credentials (the Settings account-name refresh). Either way the answer
+// is reported alongside the name.
 - (void)fetchAccountNameWithCookieHeader:(NSString *)cookieHeader
-                              completion:(void (^)(NSString *name, NSError *error))completion {
+                             diagnostics:(void (^)(NSString *name, NSString *detail, NSError *error))completion {
     NSDictionary *body = @{@"context": [self webRemixContext]};
     [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body
         cookieHeader:cookieHeader
-          completion:^(id json, NSError *error) {
-        if (error || !json) {
-            if (completion) completion(nil, error);
-            return;
+       responseBlock:^(id json, NSInteger statusCode, NSString *bodyText, NSError *error) {
+        NSString *name = json ? LTAccountNameFromAccountMenu(json) : nil;
+        NSString *detail = LTAccountMenuDetail(statusCode, json, bodyText, name, error);
+        if (name.length) {
+            LTLog(@"AUTH account check accepted: %@", detail);
+        } else {
+            LTLog(@"AUTH account check rejected: %@", detail);
         }
-        NSString *name = LTAccountNameFromAccountMenu(json);
-        if (!name.length) LTLog(@"AUTH account menu returned no account header");
-        if (completion) completion(name, nil);
+        if (completion) completion(name, detail, error);
     }];
 }
 

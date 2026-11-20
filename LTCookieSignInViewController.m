@@ -209,24 +209,27 @@
     NSString *candidate = [[LTAuth sharedAuth] normalizedCookieHeaderFromInput:text];
     __weak LTCookieSignInViewController *weakSelf = self;
     [[LTYouTubeClient sharedClient] fetchAccountNameWithCookieHeader:candidate
-                                                         completion:^(NSString *name, NSError *error) {
+                                                        diagnostics:^(NSString *name, NSString *detail, NSError *error) {
         LTCookieSignInViewController *strongSelf = weakSelf;
         if (!strongSelf) return;
         [strongSelf.spinner stopAnimating];
         strongSelf.signInButton.enabled = YES;
 
         if (!name.length) {
-            LTLog(@"AUTH cookie sign-in rejected: %@", error);
+            // The check line is repeated on screen and in the log, so a failed
+            // paste can be read off the phone without a console.
+            LTLog(@"AUTH cookie sign-in rejected: %@ (%@)", detail, error);
+            NSString *checked = detail.length ? detail : @"no detail from the check";
             if (![[LTAuth sharedAuth] cookieHeaderHasSession:candidate]) {
                 // The paste carried the hash secret but no session cookies, and
                 // the server returned no account for it. Say that, and point at
                 // the fuller paste, without claiming the value itself is wrong.
                 [strongSelf showMessage:@"No account came back"
-                                   body:@"YouTube Music returned no account for that paste, so nothing was changed. A whole cookie line (SID=…; HSID=…; SAPISID=…) is the most reliable thing to paste: tap How do I get my cookies? and copy the cookies as shown in step 4."];
+                                   body:[NSString stringWithFormat:@"YouTube Music returned no account for that paste, so nothing was changed.\n\nServer said: %@.\n\nA whole cookie line (SID=…; HSID=…; SAPISID=…) is the most reliable thing to paste: tap How do I get my cookies? and copy the cookies as shown in step 4.", checked]];
                 return;
             }
             [strongSelf showMessage:@"No account came back"
-                               body:@"YouTube Music returned no account for that cookie, so nothing was changed. Check that the browser is signed into the account you want, copy a fresh cookie line, and try again."];
+                               body:[NSString stringWithFormat:@"YouTube Music returned no account for that cookie, so nothing was changed.\n\nServer said: %@.\n\nCheck that the browser is signed into the account you want, copy a fresh cookie line, and try again.", checked]];
             return;
         }
         [[LTAuth sharedAuth] setCredentialsWithCookieHeader:candidate accountName:name];
