@@ -613,7 +613,11 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             BOOL signedIn = [[LTAuth sharedAuth] signedIn];
             if (indexPath.row == 0) {
                 cell.textLabel.text = @"Google Sign-In";
-                cell.detailTextLabel.text = @"Web page";
+                // 32-bit hardware cannot run the page; the row stays so the
+                // screen can explain and point at Cookies Sign-In.
+                cell.detailTextLabel.text = [LTSignInViewController webSignInSupported]
+                    ? @"Web page"
+                    : @"Unavailable here";
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 1) {

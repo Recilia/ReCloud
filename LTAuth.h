@@ -31,14 +31,25 @@ extern NSString *const LTAuthDidChangeNotification;
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
                            accountName:(NSString *)accountName;
 
-// Collects Google cookies already present in the shared cookie store (e.g.
-// left by another app or an older sign-in) and stores them. Returns YES if
-// any whitelisted cookie was found.
-- (BOOL)adoptCookiesFromSharedStorage;
+// The same normalisation setCredentialsWithCookieHeader: applies (a bare
+// token becomes the SAPISID pair), without storing anything. Used to check a
+// pasted cookie before it is allowed to replace a working sign-in.
+- (NSString *)normalizedCookieHeaderFromInput:(NSString *)input;
+
+// The whitelisted Google cookies already in the shared cookie store (e.g. left
+// by another app or an older sign-in) as one "NAME=VALUE; …" header, without
+// storing anything, so a candidate can be checked before it is saved. Returns
+// nil when there are none.
+- (NSString *)cookieHeaderFromSharedStorage;
 
 // "SAPISIDHASH <time>_<digest>" for the given origin, e.g.
 // "https://music.youtube.com". Returns nil when signed out.
 - (NSString *)authorizationHeaderForOrigin:(NSString *)origin;
+
+// The same header computed from an arbitrary cookie header instead of the
+// stored one, so a candidate sign-in can be tested without touching it.
+- (NSString *)authorizationHeaderForCookieHeader:(NSString *)cookieHeader
+                                          origin:(NSString *)origin;
 
 - (void)signOut;
 

@@ -108,6 +108,14 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
 
 - (void)postToHost:(NSString *)host path:(NSString *)path body:(NSDictionary *)body
         completion:(void (^)(id json, NSError *error))completion {
+    [self postToHost:host path:path body:body cookieHeader:nil completion:completion];
+}
+
+// cookieHeader overrides the stored credentials for this one request, which is
+// how a pasted cookie is checked before it is saved. nil means "use LTAuth".
+- (void)postToHost:(NSString *)host path:(NSString *)path body:(NSDictionary *)body
+      cookieHeader:(NSString *)cookieHeader
+        completion:(void (^)(id json, NSError *error))completion {
     NSString *urlString = [NSString stringWithFormat:@"https://%@/youtubei/v1/%@?key=%@&prettyPrint=false",
                            host, path, LTAPIKey];
     NSURL *url = [NSURL URLWithString:urlString];
@@ -119,7 +127,17 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     [request setValue:LTBrowserUserAgent forHTTPHeaderField:@"User-Agent"];
     [request setValue:[NSString stringWithFormat:@"https://%@/", host] forHTTPHeaderField:@"Referer"];
 
-    if ([[LTAuth sharedAuth] signedIn]) {
+    if (cookieHeader.length) {
+        // A candidate sign-in: authenticate as that cookie would, without
+        // touching whatever LTAuth currently holds.
+        NSString *origin = [NSString stringWithFormat:@"https://%@", host];
+        NSString *auth = [[LTAuth sharedAuth] authorizationHeaderForCookieHeader:cookieHeader
+                                                                        origin:origin];
+        if (auth.length) [request setValue:auth forHTTPHeaderField:@"Authorization"];
+        [request setValue:cookieHeader forHTTPHeaderField:@"Cookie"];
+        [request setValue:origin forHTTPHeaderField:@"X-Origin"];
+        [request setValue:@"0" forHTTPHeaderField:@"X-Goog-AuthUser"];
+    } else if ([[LTAuth sharedAuth] signedIn]) {
         // Cookie-based InnerTube auth (SAPISIDHASH), same scheme the
         // YouTube Music web client uses for signed-in users.
         NSString *origin = [NSString stringWithFormat:@"https://%@", host];
@@ -712,6 +730,26 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
 - (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion {
     NSDictionary *body = @{@"context": [self webRemixContext]};
     [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body completion:^(id json, NSError *error) {
+        if (error || !json) {
+            if (completion) completion(nil, error);
+            return;
+        }
+        NSString *name = LTPath(json, @"actions", @0, @"openPopupAction", @"popup",
+                                @"multiPageMenuRenderer", @"header", @"activeAccountHeaderRenderer",
+                                @"accountName", @"runs", @0, @"text", nil);
+        if (![name isKindOfClass:[NSString class]]) name = nil;
+        if (completion) completion(name, nil);
+    }];
+}
+
+// Same call, but authenticated with a candidate cookie header instead of the
+// stored one, so it can be validated before it replaces a working sign-in.
+- (void)fetchAccountNameWithCookieHeader:(NSString *)cookieHeader
+                              completion:(void (^)(NSString *name, NSError *error))completion {
+    NSDictionary *body = @{@"context": [self webRemixContext]};
+    [self postToHost:@"music.youtube.com" path:@"account/account_menu" body:body
+        cookieHeader:cookieHeader
+          completion:^(id json, NSError *error) {
         if (error || !json) {
             if (completion) completion(nil, error);
             return;

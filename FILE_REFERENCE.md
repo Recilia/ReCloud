@@ -170,8 +170,11 @@ cookie-based SAPISIDHASH scheme the YouTube Music web client uses:
 in-app Google page or is pasted from a desktop browser signed into YouTube Music (see
 `LTSignInViewController` and `LTCookieSignInViewController`). The API exposes `signedIn`, `accountName`, `sapisid`
 (SAPISID, then `__Secure-3PAPISID`, then `__Secure-1PAPISID`), `cookieHeader`, and methods
-`setCredentialsWithCookieHeader:accountName:`, `adoptCookiesFromSharedStorage`,
-`authorizationHeaderForOrigin:` and `signOut`. Credentials persist in NSUserDefaults and changes are
+`setCredentialsWithCookieHeader:accountName:`, `cookieHeaderFromSharedStorage` (the whitelisted shared
+cookies as one header, without storing them), `authorizationHeaderForOrigin:`, `authorizationHeaderForCookieHeader:origin:` (the same header built from
+an arbitrary cookie header, so a candidate sign-in can be tested without storing it),
+`normalizedCookieHeaderFromInput:` (the bare-token/whole-header normalisation, without writing
+anything) and `signOut`. Credentials persist in NSUserDefaults and changes are
 broadcast via `LTAuthDidChangeNotification`.
 
 ### `LTWebExporter.h` / `LTWebExporter.m`
@@ -488,25 +491,40 @@ so the iOS 9.3 armv7 SDK still compiles). The web view itself is typed as the lo
 `LTWKWebViewLike` protocol (`loadRequest:`, `stopLoading`, `isLoading`, `setCustomUserAgent:`) rather
 than poked with string-key KVC, so a wrong signature fails the build; the poll timer's target is a
 `LTWeakTimerProxy` so it cannot retain the controller, and it is invalidated in `dealloc` too.
-`adoptWKCookies:` keeps the `google`/`youtube` cookies and
-only replaces the stored credentials when SAPISID is among them. **Everything else keeps `UIWebView`** (iOS 6-10, 32-bit included)
+`adoptWKCookies:` keeps the `google`/`youtube` cookies, requires SAPISID to be among them, and then
+hands the sorted header to `startCookieCheck:` — nothing is stored from the page itself, so an expired
+session cannot replace a working sign-in. **Everything else keeps `UIWebView`** (iOS 6-10, 32-bit included)
 (`openUIWebViewInFrame:`), which shares cookies with `NSHTTPCookieStorage`, so `webViewDidFinishLoad:`
-can adopt them via `tryAdoptCookies`. The screen is offered on every version of the app.
+reads them out with `cookieHeaderFromSharedStorage` and checks them via `tryAdoptCookies`. The screen is offered on every version of the app, but it degrades instead of showing a blank browser.
+`+webSignInSupported` is NO on 32-bit hardware, where Google's page crashes the legacy WebKit engine
+natively: the page is never loaded and `showFallbackWithMessage:canRetry:` puts an explanation plus a
+**Use Cookies Sign-In** button on screen. The same panel replaces the browser on a failed load
+(`handleWebFailure:`, fed by the UIWebView delegate or the `LTWKNavigationDelegateLike` callbacks) and
+on `webViewWebContentProcessDidTerminate:`, with a **Try Again** button as well. `openCookieSignInTapped:`
+swaps this screen for `LTCookieSignInViewController` in the navigation stack, so a successful cookie
+sign-in pops back to Settings rather than to this dead end.
 WebKit is never linked: the armv7 SDK has it only as a private framework, so `LTEnsureWebKitLoaded`
-dlopens it on demand on the iOS 11+ path and iOS 6-10 launches never touch it. `viewWillDisappear:`
-and `finishSignIn` stop the cookie poll timer. The cookie route has its own screen,
-`LTCookieSignInViewController`. `finishSignIn` verifies the account via `fetchAccountNameWithCompletion:` and
-closes (guarded by `finished` so repeated web-view loads cannot pop twice). `checkTapped:` manually
-retries cookie adoption. The bar carries `Cancel` on the left (`cancelTapped:`) and `Check` on the right.
+dlopens it on demand on the iOS 11+ path and iOS 6-10 launches never touch it. `viewWillDisappear:` stops the cookie poll timer. The cookie route has its own screen,
+`LTCookieSignInViewController`. `startCookieCheck:` is the single write path for the web route: it calls
+`fetchAccountNameWithCookieHeader:` with the candidate, ignores a candidate it has already asked about
+(`lastCheckedHeader`) and refuses to overlap checks (`validating`). That dedupe is skipped when
+`forceNextCheck` is set — a one-shot flag `checkTapped:` arms, which survives the asynchronous WK
+adopt hop so an explicit Check retries a set the poll already rejected, while the poll itself keeps
+deduping, and only a name coming back lets
+`setCredentialsWithCookieHeader:accountName:` run before `finishSignInWithAccountName:` pops the screen.
+A rejected candidate leaves the stored credentials alone and just updates the hint. `checkTapped:`
+re-runs that check by hand. The bar carries `Cancel` on the left (`cancelTapped:`) and `Check` on the right.
 
 ### `LTCookieSignInViewController.h` / `LTCookieSignInViewController.m`
 Cookie sign-in GUI (Settings → Account → Cookies Sign-In). A `UITextView` accepts a bare SAPISID
 value or a full Cookie header, with a placeholder overlay (`textViewDidChange:`) and keyboard insets
-on a `UIScrollView` (`keyboardWillShow:` / `keyboardWillHide:`). `signInTapped:` rejects empty input,
-stores the value through `setCredentialsWithCookieHeader:accountName:` and then proves it works with
-`fetchAccountNameWithCompletion:`: a rejected cookie shows an alert and stays on the screen, a good
-one is re-stored with the account name and the screen pops back to Settings. `guideTapped:` pushes
-`LTCookieTutorialViewController`.
+on a `UIScrollView` (`keyboardWillShow:` / `keyboardWillHide:`). `signInTapped:` rejects empty input and
+then validates before storing: the candidate header goes through
+`fetchAccountNameWithCookieHeader:` (which authenticates that one request with it, via
+`postToHost:path:body:cookieHeader:completion:`) and only a name coming back lets
+`setCredentialsWithCookieHeader:accountName:` replace the stored credentials. A rejected cookie
+shows an alert and leaves an existing sign-in untouched; a good one is saved with the account name
+and the screen pops back to Settings. `guideTapped:` pushes `LTCookieTutorialViewController`.
 
 ### `LTCookieTutorialViewController.h` / `LTCookieTutorialViewController.m`
 The guide behind "How do I get my cookies?": a read-only scrolling `UITextView` (`guideText`) that

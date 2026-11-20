@@ -1,6 +1,6 @@
 Package: com.legacymusic.app
 Name: Re:Cloud
-Version: 4.54
+Version: 4.55
 Architecture: iphoneos-arm
 Description: YouTube Music client for legacy iOS devices
 Maintainer: Rein <rein@localhost>

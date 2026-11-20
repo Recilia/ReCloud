@@ -6,4 +6,9 @@
 // the app, so the cookies need no copying).
 @interface LTSignInViewController : UIViewController
 
+// NO on 32-bit devices, where Google's page crashes the legacy WebKit engine
+// natively. Those devices never load it: the screen explains why and points at
+// Cookies Sign-In instead.
++ (BOOL)webSignInSupported;
+
 @end

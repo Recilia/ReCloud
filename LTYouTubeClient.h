@@ -52,6 +52,12 @@ extern NSString *const LTBrowserUserAgent;
 // Display name of the signed-in account.
 - (void)fetchAccountNameWithCompletion:(void (^)(NSString *name, NSError *error))completion;
 
+// Same check, authenticated with a candidate cookie header instead of the
+// stored one. Nothing is saved by this call; a name back means the cookie
+// works. Used to validate a paste before it replaces a working sign-in.
+- (void)fetchAccountNameWithCookieHeader:(NSString *)cookieHeader
+                              completion:(void (^)(NSString *name, NSError *error))completion;
+
 // Mix/radio playlist ids (RD..., e.g. from home shelves) load through the
 // "next" endpoint rather than browse.
 - (void)fetchRadioTracksForPlaylistId:(NSString *)playlistId

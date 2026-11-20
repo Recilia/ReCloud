@@ -32,6 +32,27 @@ static NSArray *LTAuthCookieWhitelist(void) {
     return names;
 }
 
+// The SAPISIDHASH header for one cookie header and origin. Kept separate from
+// the stored credentials so a candidate cookie can be tested before it is
+// saved over a working sign-in.
+static NSString *LTAuthAuthorizationHeader(NSString *sapisid, NSString *origin) {
+    if (!sapisid.length || !origin.length) return nil;
+
+    NSTimeInterval interval = [[NSDate date] timeIntervalSince1970];
+    long long seconds = (long long)interval;
+    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, origin, sapisid];
+
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+    NSData *data = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    CC_SHA1([data bytes], (CC_LONG)[data length], digest);
+
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA1_DIGEST_LENGTH * 2];
+    for (NSUInteger i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) {
+        [hex appendFormat:@"%02x", digest[i]];
+    }
+    return [NSString stringWithFormat:@"SAPISIDHASH %lld_%@", seconds, hex];
+}
+
 static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name) {
     if (!cookieHeader.length || !name.length) return nil;
     // Matches "name=value" separated by "; " (or surrounded by start/whitespace).
@@ -83,17 +104,23 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
                                                         object:nil];
 }
 
-- (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
-                           accountName:(NSString *)accountName {
-    NSString *trimmed = [cookieHeader stringByTrimmingCharactersInSet:
+- (NSString *)normalizedCookieHeaderFromInput:(NSString *)input {
+    NSString *trimmed = [input stringByTrimmingCharactersInSet:
                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (!trimmed.length) return;
+    if (!trimmed.length) return nil;
 
     if ([trimmed rangeOfString:@"="].location == NSNotFound) {
         // A bare token: treat it as the SAPISID value and synthesize the
         // cookie pair YouTube Music expects.
         trimmed = [NSString stringWithFormat:@"SAPISID=%@; __Secure-3PAPISID=%@", trimmed, trimmed];
     }
+    return trimmed;
+}
+
+- (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
+                           accountName:(NSString *)accountName {
+    NSString *trimmed = [self normalizedCookieHeaderFromInput:cookieHeader];
+    if (!trimmed.length) return;
 
     [[NSUserDefaults standardUserDefaults] setObject:trimmed forKey:kLTAuthCookieHeader];
     if (accountName.length) {
@@ -103,38 +130,33 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
     [self notifyChange];
 }
 
-- (BOOL)adoptCookiesFromSharedStorage {
+- (NSString *)cookieHeaderFromSharedStorage {
     NSArray *cookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies];
     NSMutableArray *pairs = [NSMutableArray array];
     for (NSHTTPCookie *cookie in cookies) {
         if (![LTAuthCookieWhitelist() containsObject:cookie.name]) continue;
+        if (!cookie.name.length || !cookie.value.length) continue;
         [pairs addObject:[NSString stringWithFormat:@"%@=%@", cookie.name, cookie.value]];
     }
-    if (!pairs.count) return NO;
-
-    NSString *header = [pairs componentsJoinedByString:@"; "];
-    // Keep an existing account name if one is already stored.
-    [self setCredentialsWithCookieHeader:header accountName:[self accountName]];
-    return YES;
+    if (!pairs.count) return nil;
+    // Sorted so the same cookie set always reads the same way; callers use
+    // that to tell one candidate from the next without re-checking.
+    NSArray *sorted = [pairs sortedArrayUsingSelector:@selector(compare:)];
+    return [sorted componentsJoinedByString:@"; "];
 }
 
 - (NSString *)authorizationHeaderForOrigin:(NSString *)origin {
-    NSString *sapisid = [self sapisid];
-    if (!sapisid.length || !origin.length) return nil;
+    return LTAuthAuthorizationHeader([self sapisid], origin);
+}
 
-    NSTimeInterval interval = [[NSDate date] timeIntervalSince1970];
-    long long seconds = (long long)interval;
-    NSString *payload = [NSString stringWithFormat:@"%lld %@ %@", seconds, origin, sapisid];
-
-    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
-    NSData *data = [payload dataUsingEncoding:NSUTF8StringEncoding];
-    CC_SHA1([data bytes], (CC_LONG)[data length], digest);
-
-    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA1_DIGEST_LENGTH * 2];
-    for (NSUInteger i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) {
-        [hex appendFormat:@"%02x", digest[i]];
-    }
-    return [NSString stringWithFormat:@"SAPISIDHASH %lld_%@", seconds, hex];
+- (NSString *)authorizationHeaderForCookieHeader:(NSString *)cookieHeader
+                                          origin:(NSString *)origin {
+    if (!cookieHeader.length) return nil;
+    // Same preference order as -sapisid.
+    NSString *sapisid = LTAuthCookieValueForName(cookieHeader, @"SAPISID");
+    if (!sapisid.length) sapisid = LTAuthCookieValueForName(cookieHeader, @"__Secure-3PAPISID");
+    if (!sapisid.length) sapisid = LTAuthCookieValueForName(cookieHeader, @"__Secure-1PAPISID");
+    return LTAuthAuthorizationHeader(sapisid, origin);
 }
 
 - (void)signOut {

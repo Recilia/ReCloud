@@ -203,12 +203,13 @@
     self.signInButton.enabled = NO;
     [self.spinner startAnimating];
 
-    [[LTAuth sharedAuth] setCredentialsWithCookieHeader:text accountName:nil];
-
-    // The account name doubles as the only real check that the cookie works:
-    // it comes from an authenticated InnerTube call.
+    // Validate first, store second. The candidate cookie is used for one
+    // request only, so a bad paste leaves whatever was already signed in
+    // untouched instead of replacing it with something that does not work.
+    NSString *candidate = [[LTAuth sharedAuth] normalizedCookieHeaderFromInput:text];
     __weak LTCookieSignInViewController *weakSelf = self;
-    [[LTYouTubeClient sharedClient] fetchAccountNameWithCompletion:^(NSString *name, NSError *error) {
+    [[LTYouTubeClient sharedClient] fetchAccountNameWithCookieHeader:candidate
+                                                         completion:^(NSString *name, NSError *error) {
         LTCookieSignInViewController *strongSelf = weakSelf;
         if (!strongSelf) return;
         [strongSelf.spinner stopAnimating];
@@ -217,10 +218,10 @@
         if (!name.length) {
             LTLog(@"AUTH cookie sign-in rejected: %@", error);
             [strongSelf showMessage:@"That cookie did not work"
-                               body:@"YouTube Music did not accept it. Check that you copied the SAPISID value from a browser signed into the account, then try again."];
+                               body:@"YouTube Music did not accept it, so nothing was changed. Check that you copied the SAPISID value from a browser signed into the account, then try again."];
             return;
         }
-        [[LTAuth sharedAuth] setCredentialsWithCookieHeader:text accountName:name];
+        [[LTAuth sharedAuth] setCredentialsWithCookieHeader:candidate accountName:name];
         LTLog(@"AUTH signed in with a pasted cookie as %@", name);
         [strongSelf.navigationController popViewControllerAnimated:YES];
     }];
