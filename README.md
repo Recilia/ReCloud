@@ -1,3 +1,6 @@
+<img width="500" height="500" alt="icon7" src="https://github.com/user-attachments/assets/584752ec-659b-490a-b24a-dda66364ae09" />
+
+
 # ReinMusic
 
 **ReinMusic** — a YouTube Music client for legacy iOS devices.
