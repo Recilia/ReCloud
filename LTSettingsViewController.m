@@ -622,7 +622,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 1) {
                 cell.textLabel.text = @"Cookies Sign-In";
-                cell.detailTextLabel.text = @"Paste SAPISID";
+                cell.detailTextLabel.text = @"Paste cookies";
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else {

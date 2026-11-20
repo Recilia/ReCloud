@@ -30,6 +30,73 @@ static id LTPath(id root, id key, ...) {
     return current;
 }
 
+// Finds the first value stored under key anywhere in a response. The account
+// menu moves its header between response versions, so a correct sign-in must
+// not depend on one hard-coded path.
+static id LTFindFirstValueForKey(id root, NSString *key, NSInteger depth) {
+    if (!root || depth > 12) return nil;
+    if ([root isKindOfClass:[NSDictionary class]]) {
+        id direct = [(NSDictionary *)root objectForKey:key];
+        if (direct) return direct;
+        for (id value in [(NSDictionary *)root allValues]) {
+            id found = LTFindFirstValueForKey(value, key, depth + 1);
+            if (found) return found;
+        }
+    } else if ([root isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)root) {
+            id found = LTFindFirstValueForKey(value, key, depth + 1);
+            if (found) return found;
+        }
+    }
+    return nil;
+}
+
+// Reads the display name out of an activeAccountHeaderRenderer, whose
+// accountName is either a string, a {simpleText} or {runs: [{text}]}.
+static NSString *LTAccountNameFromRenderer(id renderer) {
+    if (![renderer isKindOfClass:[NSDictionary class]]) return nil;
+    id accountName = [(NSDictionary *)renderer objectForKey:@"accountName"];
+    if ([accountName isKindOfClass:[NSString class]] && [accountName length]) {
+        return accountName;
+    }
+    if ([accountName isKindOfClass:[NSDictionary class]]) {
+        id simple = [(NSDictionary *)accountName objectForKey:@"simpleText"];
+        if ([simple isKindOfClass:[NSString class]] && [simple length]) return simple;
+        id runs = [(NSDictionary *)accountName objectForKey:@"runs"];
+        if ([runs isKindOfClass:[NSArray class]]) {
+            NSMutableString *text = [NSMutableString string];
+            for (id run in (NSArray *)runs) {
+                id piece = [run isKindOfClass:[NSDictionary class]] ? [run objectForKey:@"text"] : nil;
+                if ([piece isKindOfClass:[NSString class]]) [text appendString:piece];
+            }
+            if (text.length) return text;
+        }
+    }
+    return nil;
+}
+
+// account/account_menu reports the session state in serviceTrackingParams, even
+// in response versions that carry no account header at all.
+static BOOL LTAccountMenuShowsSignedIn(id json) {
+    id flag = LTFindFirstValueForKey(json, @"logged_in", 0);
+    return ([flag isKindOfClass:[NSString class]] && [flag isEqualToString:@"1"]);
+}
+
+// The name to report for an account/account_menu response, or nil when the
+// response has no account header at all (i.e. the cookie was not accepted).
+static NSString *LTAccountNameFromAccountMenu(id json) {
+    NSString *name = LTPath(json, @"actions", @0, @"openPopupAction", @"popup",
+                            @"multiPageMenuRenderer", @"header", @"activeAccountHeaderRenderer",
+                            @"accountName", @"runs", @0, @"text", nil);
+    if ([name isKindOfClass:[NSString class]] && name.length) return name;
+    // The header moves around between WEB_REMIX versions; its presence proves
+    // the cookie authenticated, so an unfamiliar shape is not a wrong cookie.
+    id renderer = LTFindFirstValueForKey(json, @"activeAccountHeaderRenderer", 0);
+    if (!renderer) return LTAccountMenuShowsSignedIn(json) ? @"Google account" : nil;
+    NSString *found = LTAccountNameFromRenderer(renderer);
+    return found.length ? found : @"Google account";
+}
+
 @interface LTYouTubeClient ()
 @property (nonatomic, strong) NSCache *imageCache;
 @property (nonatomic, strong) NSMutableDictionary *channelAvatarCache;
@@ -734,10 +801,8 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
             if (completion) completion(nil, error);
             return;
         }
-        NSString *name = LTPath(json, @"actions", @0, @"openPopupAction", @"popup",
-                                @"multiPageMenuRenderer", @"header", @"activeAccountHeaderRenderer",
-                                @"accountName", @"runs", @0, @"text", nil);
-        if (![name isKindOfClass:[NSString class]]) name = nil;
+        NSString *name = LTAccountNameFromAccountMenu(json);
+        if (!name.length) LTLog(@"AUTH account menu returned no account header");
         if (completion) completion(name, nil);
     }];
 }
@@ -754,10 +819,8 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
             if (completion) completion(nil, error);
             return;
         }
-        NSString *name = LTPath(json, @"actions", @0, @"openPopupAction", @"popup",
-                                @"multiPageMenuRenderer", @"header", @"activeAccountHeaderRenderer",
-                                @"accountName", @"runs", @0, @"text", nil);
-        if (![name isKindOfClass:[NSString class]]) name = nil;
+        NSString *name = LTAccountNameFromAccountMenu(json);
+        if (!name.length) LTLog(@"AUTH account menu returned no account header");
         if (completion) completion(name, nil);
     }];
 }

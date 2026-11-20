@@ -35,6 +35,16 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 @property (nonatomic, copy) NSString *lastRetriedVideoId;
 @property (nonatomic, assign) BOOL suppressTrackStats;
 @property (nonatomic, strong) NSTimer *streamWatchdog;
+// Bumped by every -loadCurrentTrack. A stream fetch or download from an earlier
+// generation is ignored, so a slow response cannot take over a track the user
+// has since chosen.
+@property (nonatomic, assign) NSUInteger loadGeneration;
+// YES between interruption begin and end, so the end-of-item watchdog stays
+// quiet during a call instead of restarting playback.
+@property (nonatomic, assign) BOOL interrupted;
+// Set once the watchdog has acted on the loaded item, so it cannot fire twice
+// for the same track.
+@property (nonatomic, assign) BOOL endRecoveryPending;
 @end
 
 @implementation LTPlayerController
@@ -132,12 +142,51 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     self.statsBaseTime = time;
 }
 
+// YES when the loaded item has finished (or failed): playing it again needs a
+// rewind, and the end-of-item watchdog treats it as "should have advanced".
+- (BOOL)activePlayerReachedEnd {
+    if (self.moviePlayer) {
+        AVPlayerItem *item = self.moviePlayer.currentItem;
+        if (!item) return YES;
+        if (item.status == AVPlayerItemStatusFailed) return YES;
+        CMTime duration = item.duration;
+        if (!CMTIME_IS_NUMERIC(duration) || CMTimeGetSeconds(duration) <= 0.0) return NO;
+        CMTime position = item.currentTime;
+        if (!CMTIME_IS_NUMERIC(position)) return NO;
+        return (CMTimeGetSeconds(position) >= CMTimeGetSeconds(duration) - 0.75);
+    }
+    if (self.audioPlayer) {
+        NSTimeInterval duration = self.audioPlayer.duration;
+        if (duration <= 0.0) return NO;
+        return (self.audioPlayer.currentTime >= duration - 0.75);
+    }
+    return NO;
+}
+
 #pragma mark - Listening stats
 
 - (void)statsTick:(NSTimer *)timer {
     [self commitStatsDelta];
+    [self checkForEndedPlayback];
     // Keep the lock screen / Control Center progress bar in step with playback.
     if ([self playerIsPlaying]) [self updateNowPlayingInfo];
+}
+
+// An item that ends without delivering its completion callback leaves the
+// player silent while the app still believes it is mid-track. Advance once in
+// that case; a normal pause, an interruption and a loading track are excluded,
+// and endRecoveryPending keeps it to one attempt per track.
+- (void)checkForEndedPlayback {
+    if (![self hasActivePlayer] || self.userPaused || self.interrupted || self.isLoading) return;
+    if ([self playerIsPlaying]) {
+        self.endRecoveryPending = NO;
+        return;
+    }
+    if (self.endRecoveryPending) return;
+    if (![self activePlayerReachedEnd]) return;
+    self.endRecoveryPending = YES;
+    LTLog(@"WATCHDOG item ended without a callback, advancing");
+    [self nextTrack];
 }
 
 - (void)commitStatsDelta {
@@ -202,7 +251,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 }
 
 - (void)appDidEnterBackground:(NSNotification *)notification {
-    if ([self hasActivePlayer] && !self.userPaused && ![self playerIsPlaying]) {
+    // An item that reached its end is not a paused player: restarting it here
+    // would replay the old track over the top of the transition.
+    if ([self hasActivePlayer] && !self.userPaused && ![self playerIsPlaying] &&
+        ![self activePlayerReachedEnd]) {
         LTLog(@"PLAYER auto-resume in background");
         [self playMovie];
     }
@@ -212,9 +264,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     NSNumber *type = [[notification userInfo] objectForKey:AVAudioSessionInterruptionTypeKey];
     LTLog(@"AUDIO interruption type=%d", [type intValue]);
     if ([type intValue] == AVAudioSessionInterruptionTypeBegan) {
+        self.interrupted = YES;
         self.resumeAfterInterruption = [self playerIsPlaying];
         [self pauseActivePlayer];
     } else if ([type intValue] == AVAudioSessionInterruptionTypeEnded) {
+        self.interrupted = NO;
         [self configureAudioSession];
         if (self.resumeAfterInterruption) {
             self.resumeAfterInterruption = NO;
@@ -230,6 +284,12 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     // A player that actually starts ends the failure streak.
     self.consecutiveLoadFailures = 0;
     self.lastRetriedVideoId = nil;
+    // Pressing Play on an item that already finished used to do nothing at all
+    // (an ended player cannot be resumed), which is how the dead state after a
+    // queue ran out looked from the lock screen. Rewind so it always restarts.
+    if ([self activePlayerReachedEnd]) {
+        [self playerSeekToTime:0];
+    }
     self.statsBaseTime = [self playerCurrentTime];
     [self startActivePlayer];
     [self updateNowPlayingInfo];
@@ -240,6 +300,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 
 - (void)pausePlayback {
     [self commitStatsDelta];
+    // Every caller of this is a deliberate pause (the in-app button, the lock
+    // screen and headset commands, an emptied queue), and the end-of-item
+    // watchdog must not treat one as a missed completion and skip ahead. This
+    // is exactly what a pause within a second of the end looked like.
+    self.userPaused = YES;
     [self pauseActivePlayer];
     [self updateNowPlayingInfo];
     [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
@@ -457,6 +522,17 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 - (void)loadCurrentTrack {
     LTTrack *track = [self currentTrack];
     if (!track) return;
+    // A new load invalidates everything still in flight: the stream fetch and
+    // the download for the previous track must not be able to start playing
+    // over this one, and the end-of-item watchdog starts fresh.
+    self.loadGeneration += 1;
+    self.endRecoveryPending = NO;
+    if (self.streamConnection) {
+        [self.streamConnection cancel];
+        self.streamConnection = nil;
+        [self stopStreamWatchdog];
+        self.streamData = nil;
+    }
     if (!self.suppressTrackStats) {
         [[LTPlaylistStore sharedStore] recordRecentTrack:track];
         [[LTPlaylistStore sharedStore] recordTrackPlay:track];
@@ -480,6 +556,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         }];
     }
 
+    // Set before the local-file branch too: recovery compares failure reports
+    // against this, and a stale id used to short-circuit them into silence.
+    self.pendingVideoId = track.videoId;
+
     NSString *localPath = [[LTPlaylistStore sharedStore] existingLocalFilePathForVideoId:track.videoId];
     if (localPath.length) {
         LTLog(@"OFFLINE playing videoId=%@ title=%@", track.videoId, track.title);
@@ -489,13 +569,14 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         return;
     }
 
-    self.pendingVideoId = track.videoId;
     self.isLoading = YES;
     LTLog(@"LOAD videoId=%@ title=%@", track.videoId, track.title);
+    NSUInteger generation = self.loadGeneration;
     __weak LTPlayerController *weakSelf = self;
     [[LTYouTubeClient sharedClient] streamURLForVideo:track.videoId completion:^(NSString *streamURL, BOOL muxedStream, NSInteger audioBitrateKbps, NSError *error) {
         LTPlayerController *strongSelf = weakSelf;
         if (!strongSelf) return;
+        if (strongSelf.loadGeneration != generation) return; // a newer track was chosen
         if (![strongSelf.pendingVideoId isEqualToString:track.videoId]) return;
         if (error) {
             LTLog(@"ERROR fetch stream: %@", error);
@@ -538,10 +619,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 
 - (void)loadMuxedFileAtURL:(NSURL *)fileURL {
     [self stopAudioPlayer];
+    // Drops the old player *and* its observers. Only the end observers used to
+    // be removed by hand, so every muxed track left a failed-to-play observer
+    // behind pointing at an item that was long gone.
+    [self stopMoviePlayer];
     AVPlayerItem *item = [AVPlayerItem playerItemWithURL:fileURL];
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:AVPlayerItemDidPlayToEndTimeNotification
-                                                  object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(playerItemDidEnd:)
                                                  name:AVPlayerItemDidPlayToEndTimeNotification
@@ -559,11 +641,20 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 }
 
 - (void)playerItemDidEnd:(NSNotification *)notification {
+    // A player item from an earlier track may still be winding down.
+    if (self.moviePlayer && notification.object != self.moviePlayer.currentItem) {
+        LTLog(@"FINISH ignoring end from a stale item");
+        return;
+    }
     LTLog(@"FINISH avplayer item end");
     [self nextTrack];
 }
 
 - (void)playerItemFailed:(NSNotification *)notification {
+    if (self.moviePlayer && notification.object != self.moviePlayer.currentItem) {
+        LTLog(@"FINISH ignoring failure from a stale item");
+        return;
+    }
     NSError *error = [[notification userInfo] objectForKey:AVPlayerItemFailedToPlayToEndTimeErrorKey];
     LTLog(@"FINISH avplayer item failed: %@", error);
     [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
@@ -653,7 +744,9 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 }
 
 - (void)downloadAndPlayURL:(NSString *)urlString videoId:(NSString *)videoId {
-    self.streamVideoId = self.pendingVideoId;
+    // Use the id the caller fetched the URL for; falling back to the pending id
+    // let an old track's download label itself as the new one.
+    self.streamVideoId = videoId.length ? videoId : self.pendingVideoId;
     self.streamHTTPStatus = 0;
     [self.streamConnection cancel];
     self.streamConnection = nil;
@@ -741,29 +834,52 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 - (void)nextTrack {
     [self commitStatsDelta];
     if (self.repeatMode == LTRepeatModeOne && self.currentIndex >= 0) {
-        [self loadCurrentTrack];
+        [self replayCurrentTrack];
         return;
     }
     if (self.currentIndex + 1 < (NSInteger)self.queue.count) {
         self.currentIndex += 1;
         [self postQueueChanged];
         [self loadCurrentTrack];
-    } else if (self.repeatMode == LTRepeatModeAll && self.queue.count) {
+        return;
+    }
+    if (self.repeatMode == LTRepeatModeAll && self.queue.count) {
         self.currentIndex = 0;
         [self postQueueChanged];
         [self loadCurrentTrack];
-    } else {
-        // Queue exhausted. With shuffle enabled, extend the queue with a
-        // radio mix seeded from the last played track so playback keeps
-        // going instead of stopping dead.
-        if (self.shuffleEnabled && [self tryExtendQueueWithRadio]) return;
-        [self finishQueueAtEnd];
+        return;
     }
+    // Queue exhausted. A listening session is a radio, so ask the mix endpoint
+    // for the next set of tracks — whether or not shuffle is on. Only a source
+    // that has genuinely run dry ends playback.
+    if ([self tryExtendQueueWithRadio]) return;
+    [self finishQueueAtEnd];
+}
+
+// Repeat One, and Previous at the start of a track, replay what is already
+// loaded instead of fetching it again: no download gap, no second play count,
+// and nothing left sitting in a finished state.
+- (void)replayCurrentTrack {
+    if (![self hasActivePlayer]) {
+        [self loadCurrentTrack];
+        return;
+    }
+    self.isLoading = NO;
+    self.consecutiveLoadFailures = 0;
+    self.lastRetriedVideoId = nil;
+    self.endRecoveryPending = NO;
+    [self playerSeekToTime:0];
+    self.statsBaseTime = 0;
+    [self playMovie];
 }
 
 - (void)finishQueueAtEnd {
-    [self pausePlayback];
-    self.currentIndex = -1;
+    // Keep the current track and index: the last item stays loaded, so Play
+    // (in-app or on the lock screen) resumes something rather than nothing and
+    // the metadata stays put.
+    LTLog(@"QUEUE nothing left to play");
+    self.isLoading = NO;
+    [self pausePlayback]; // deliberate stop, so the watchdog stays quiet
     [self postQueueChanged];
     [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerDidFinishQueueNotification object:self];
 }
@@ -775,47 +891,80 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
     if (self.radioPending) return YES; // already fetching; wait for it
     LTTrack *seed = [self currentTrack];
     if (!seed.videoId.length) return NO;
-    NSString *radioId = [NSString stringWithFormat:@"RDAMVM%@", seed.videoId];
+    [self extendQueueWithSeed:seed.videoId allowFallback:YES];
+    return YES;
+}
+
+// One mix request. Mixes overlap heavily with what has already played, so a
+// response can be entirely duplicates; when that happens the queue retries with
+// a second seed before giving up. Trusting the first response is what used to
+// end a session after a handful of tracks.
+- (void)extendQueueWithSeed:(NSString *)seedVideoId allowFallback:(BOOL)allowFallback {
+    NSString *radioId = [NSString stringWithFormat:@"RDAMVM%@", seedVideoId];
     self.radioPending = YES;
-    NSInteger lastIndex = self.currentIndex;
-    NSUInteger lastCount = [self.queue count];
+    NSUInteger generation = self.loadGeneration;
+    NSUInteger baseCount = [self.queue count];
     LTLog(@"RADIO extending queue with %@", radioId);
     __weak LTPlayerController *weakSelf = self;
     [[LTYouTubeClient sharedClient] fetchRadioTracksForPlaylistId:radioId completion:^(NSArray *tracks, NSError *error) {
         __strong LTPlayerController *strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf.radioPending = NO;
-        // Bail out if the user did anything else while we were fetching.
-        if (strongSelf.currentIndex != lastIndex || strongSelf.queue.count != lastCount) return;
-        if (error || tracks.count == 0) {
-            [strongSelf finishQueueAtEnd];
-            return;
-        }
+        // The user changed track or queue while the mix was in flight.
+        if (strongSelf.loadGeneration != generation || strongSelf.queue.count != baseCount) return;
+        if (error) LTLog(@"RADIO fetch failed: %@", error);
+
         NSMutableArray *queue = [strongSelf.queue mutableCopy];
         NSMutableArray *source = [strongSelf.sourceQueue mutableCopy] ?: [NSMutableArray array];
-        NSMutableArray *added = [NSMutableArray array];
+        NSUInteger added = 0;
         for (LTTrack *track in tracks) {
-            if (!track.videoId.length || [track.videoId isEqualToString:seed.videoId]) continue;
-            BOOL duplicate = NO;
-            for (LTTrack *existing in queue) {
-                if ([existing.videoId isEqualToString:track.videoId]) { duplicate = YES; break; }
-            }
-            if (duplicate) continue;
+            if (!track.videoId.length) continue;
+            if ([track.videoId isEqualToString:seedVideoId]) continue;
+            if ([strongSelf indexOfTrackWithVideoId:track.videoId] >= 0) continue;
             [queue addObject:track];
             [source addObject:track];
-            [added addObject:track];
+            added += 1;
         }
-        if (!added.count) {
+        if (added == 0) {
+            NSString *fallbackSeed = allowFallback ? [strongSelf radioSeedExcluding:seedVideoId] : nil;
+            if (fallbackSeed.length) {
+                LTLog(@"RADIO no new tracks from %@, trying %@", seedVideoId, fallbackSeed);
+                [strongSelf extendQueueWithSeed:fallbackSeed allowFallback:NO];
+                return;
+            }
             [strongSelf finishQueueAtEnd];
             return;
         }
         strongSelf.queue = queue;
         strongSelf.sourceQueue = source;
         [strongSelf postQueueChanged];
-        strongSelf.currentIndex = lastIndex + 1;
+        // baseCount is the index of the first appended track.
+        strongSelf.currentIndex = (NSInteger)baseCount;
         [strongSelf loadCurrentTrack];
     }];
-    return YES;
+}
+
+- (NSInteger)indexOfTrackWithVideoId:(NSString *)videoId {
+    if (!videoId.length) return -1;
+    for (NSInteger i = 0; i < (NSInteger)self.queue.count; i++) {
+        LTTrack *existing = [self.queue objectAtIndex:(NSUInteger)i];
+        if ([existing.videoId isEqualToString:videoId]) return i;
+    }
+    return -1;
+}
+
+// A different seed for a retry, away from the track whose mix just came back
+// empty, so the second request is not the same dead end again.
+- (NSString *)radioSeedExcluding:(NSString *)excludedVideoId {
+    NSMutableArray *candidates = [NSMutableArray array];
+    for (LTTrack *track in self.queue) {
+        if (!track.videoId.length) continue;
+        if ([track.videoId isEqualToString:excludedVideoId]) continue;
+        [candidates addObject:track.videoId];
+    }
+    if (!candidates.count) return nil;
+    NSUInteger pick = arc4random_uniform((uint32_t)candidates.count);
+    return [candidates objectAtIndex:pick];
 }
 
 // Lock screen / Control Center "previous": always go back to the last track,
@@ -848,7 +997,7 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
     } else if ([self playerCurrentTime] > 3.0) {
         [self playerSeekToTime:0];
     } else {
-        [self loadCurrentTrack];
+        [self replayCurrentTrack];
     }
 }
 
@@ -911,7 +1060,6 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 - (void)togglePlayPause {
     if (![self hasActivePlayer]) return;
     if ([self playerIsPlaying]) {
-        self.userPaused = YES;
         [self pausePlayback];
     } else {
         [self playMovie];
@@ -926,6 +1074,12 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 #pragma mark - AVAudioPlayerDelegate
 
 - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player successfully:(BOOL)flag {
+    // The delegate is still pointed at this controller when a player is
+    // replaced, and a late callback from the old one would skip twice.
+    if (player != self.audioPlayer) {
+        LTLog(@"FINISH ignoring end from a replaced player");
+        return;
+    }
     LTLog(@"FINISH success=%d", flag);
     if (flag) {
         [self nextTrack];
@@ -936,6 +1090,7 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 }
 
 - (void)audioPlayerDecodeErrorDidOccur:(AVAudioPlayer *)player error:(NSError *)error {
+    if (player != self.audioPlayer) return; // belongs to a track already replaced
     LTLog(@"AUDIOPLAYER decode error: %@", error);
     [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
 }

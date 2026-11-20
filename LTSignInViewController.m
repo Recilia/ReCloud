@@ -198,8 +198,8 @@ static id LTWKHTTPCookieStore(void) {
 
     if (![[self class] webSignInSupported]) {
         [self showFallbackWithMessage:@"Google's sign-in page crashes the old WebKit engine on 32-bit devices, "
-                                       "so it is not loaded here. Sign in with a cookie instead: paste a SAPISID "
-                                       "value from a desktop browser signed into YouTube Music."
+                                       "so it is not loaded here. Sign in with cookies instead: paste the "
+                                       "cookie line from a desktop browser signed into YouTube Music."
                              canRetry:NO];
         return;
     }
@@ -424,7 +424,7 @@ static id LTWKHTTPCookieStore(void) {
     if (error.code == NSURLErrorCancelled) return;
     LTLog(@"AUTH web view failed: %@", error);
     [self showFallbackWithMessage:@"Google's sign-in page could not be loaded on this device. "
-                                   "Cookies Sign-In still works: paste a SAPISID value from a desktop "
+                                   "Cookies Sign-In still works: paste your YouTube Music cookies from a "
                                    "browser signed into YouTube Music."
                          canRetry:YES];
 }
@@ -448,7 +448,7 @@ static id LTWKHTTPCookieStore(void) {
     // The page's process died — this is what a blank WKWebView looks like.
     LTLog(@"AUTH web content process terminated");
     [self showFallbackWithMessage:@"Google's sign-in page stopped responding on this device. "
-                                   "Cookies Sign-In still works: paste a SAPISID value from a desktop "
+                                   "Cookies Sign-In still works: paste your YouTube Music cookies from a "
                                    "browser signed into YouTube Music."
                          canRetry:YES];
 }
@@ -623,7 +623,7 @@ static id LTWKHTTPCookieStore(void) {
     if (self.failed) {
         // Nothing to check while the browser is down; offer the working route.
         UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Google Sign-In unavailable"
-                                                        message:@"Google's page cannot run here. Use Cookies Sign-In and paste a SAPISID value from a desktop browser."
+                                                        message:@"Google's page cannot run here. Use Cookies Sign-In and paste your YouTube Music cookies from a desktop browser."
                                                        delegate:nil
                                               cancelButtonTitle:@"OK"
                                               otherButtonTitles:nil];
@@ -642,7 +642,7 @@ static id LTWKHTTPCookieStore(void) {
     // itself, so neither case needs the "not signed in" alert.
     if (self.wkWebView || self.validating) return;
     UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Not signed in yet"
-                                                    message:@"No Google account cookie found yet. Finish signing in on the page, or use Cookies Sign-In to paste a SAPISID cookie."
+                                                    message:@"No Google account cookie found yet. Finish signing in on the page, or use Cookies Sign-In to paste your YouTube Music cookies."
                                                    delegate:nil
                                           cancelButtonTitle:@"OK"
                                           otherButtonTitles:nil];

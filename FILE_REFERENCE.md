@@ -27,9 +27,13 @@ Settings — each wrapped in a `UINavigationController`), `standardRootViewContr
 controller in `LTSplitContainerViewController` on iPad), and `applyDisplayModeAnimated:` (re-applies
 the iPod-mode / one-handed-mode root). The implementation installs an uncaught-exception handler
 that writes crash reports to `lt_crash.txt` in the temp directory, configures the `AVAudioSession`
-for background playback, registers `MPRemoteCommandCenter` handlers (play/pause/next/previous/skip/
-position) so lock-screen and headphone controls work, and handles `remoteControlReceivedWithEvent:`
-for the old-style remote events used on legacy iOS. The remote "previous" handler calls
+for background playback, registers `MPRemoteCommandCenter` handlers (play/pause/next/previous/
+position) so lock-screen and headphone controls work, and handles `remoteControlReceivedWithEvent:`. The
+15-second skip commands are deliberately never registered: enabling them with preferred intervals is
+what makes iOS draw ⏪15 / 15⏩ *instead of* previous/next on the lock screen (true on 9.3.6, and not
+something a version check would fix), so the transport is always Prev / Play-Pause / Next while the
+scrubber still comes from `changePlaybackPositionCommand`. In-app 15s seeking is untouched. It also
+handles `remoteControlReceivedWithEvent:` for the old-style remote events used on legacy iOS. The remote "previous" handler calls
 `rewindToPreviousTrack` rather than `previousTrack`, so the lock screen always returns to the last
 track instead of restarting the current one. It also forwards delegate callbacks for
 backgrounding/foregrounding to the player controller.
@@ -151,7 +155,8 @@ playlist result kinds); browsing (`browseAlbum`, `browsePlaylist`, `browseArtist
 info/subtitle/thumbnail extraction and artist top-songs/albums shelf parsing; channel avatar
 resolution (`channelAvatarURLForBrowseId:`, `resolveArtistAvatarForName:`); trending songs via the
 music charts; authenticated content (`fetchHomeRecommendations`, `fetchLibraryPlaylists`,
-`fetchAccountHistory`, `fetchAccountName`); mix/radio playlists via the `next` endpoint; streaming
+`fetchAccountHistory`, `fetchAccountName`, `fetchAccountNameWithCookieHeader:completion:`); mix/radio
+playlists via the `next` endpoint; streaming
 (`streamURLForVideo:` → `fetchStreamURLWithContext:` hitting the `player` endpoint with a fallback
 chain ANDROID → ANDROID_VR → IOS, preferring adaptive audio itags 141/140/139 (256/128/48 kbps) and
 falling back to the muxed itag 18, recording `lastFormatInfo`); lyrics (caption track discovery via
@@ -161,7 +166,11 @@ YouTube Music lyrics browse response for timestamped or plain lyrics with source
 `trackMetadataForVideoId:` (title/artist/duration/thumbnail via `next`). It also provides async
 image loading with an `NSCache` and a disk cache, plus thumbnail URL upgraders
 (`highResThumbnailURL`, `channelAvatarURL:size:`, `squareAvatarURL`, `compatThumbnailURL`). A
-varargs `LTPath` helper safely walks nested dict/array JSON.
+varargs `LTPath` helper safely walks nested dict/array JSON. Sign-in validation does not rely on one
+deep path: `LTAccountNameFromAccountMenu` reads `activeAccountHeaderRenderer.accountName` wherever
+`LTFindFirstValueForKey` finds the header (string, `simpleText` or `runs`) and accepts
+`serviceTrackingParams`' `logged_in=1` as proof of a resolved session, so a response version that
+formats the name differently cannot turn a working cookie into "did not work".
 
 ### `LTAuth.h` / `LTAuth.m`
 Singleton holding Google account credentials for authenticated InnerTube calls, using the same
@@ -173,8 +182,12 @@ in-app Google page or is pasted from a desktop browser signed into YouTube Music
 `setCredentialsWithCookieHeader:accountName:`, `cookieHeaderFromSharedStorage` (the whitelisted shared
 cookies as one header, without storing them), `authorizationHeaderForOrigin:`, `authorizationHeaderForCookieHeader:origin:` (the same header built from
 an arbitrary cookie header, so a candidate sign-in can be tested without storing it),
-`normalizedCookieHeaderFromInput:` (the bare-token/whole-header normalisation, without writing
-anything) and `signOut`. Credentials persist in NSUserDefaults and changes are
+`normalizedCookieHeaderFromInput:` (the paste normalisation: a devtools `Cookie:` prefix, a quoted
+value, tabs, one-cookie-per-line and a trailing `;` are all reduced to one header without writing
+anything), `cookieHeaderHasSession:` (whether the header carries `SID` or a `__Secure-*PSID`, i.e. a
+session YouTube can resolve to an account) and `signOut`. Cookie values are trimmed when they are
+read out of a header, since a stray space after `SAPISID=` used to break the digest for an otherwise
+correct cookie. Credentials persist in NSUserDefaults and changes are
 broadcast via `LTAuthDidChangeNotification`.
 
 ### `LTWebExporter.h` / `LTWebExporter.m`
@@ -290,6 +303,31 @@ the `streamWatchdog` timer — and a successful start in `playMovie` resets the 
 `rewindToPreviousTrack` always goes back to the previous track (or the end of the queue when
 repeating), `updateNowPlayingInfo` is re-published on track change and from `statsTick:` so elapsed
 time and the progress bar stay accurate, and the artwork refreshes when it loads.
+
+Keeping a session going is the job of three pieces. **Continuation:** `nextTrack` at the end of the
+queue always asks for a mix (`tryExtendQueueWithRadio` → `extendQueueWithSeed:allowFallback:`) whether
+or not shuffle is on, since a queue running out is not the same as the artist running out;
+`RDAMVM<seed>` tracks are appended, deduplicated by video id via `indexOfTrackWithVideoId:`, and a
+response that is entirely duplicates (mixes overlap heavily with what has already played) is retried
+once with a different seed from `radioSeedExcluding:` before `finishQueueAtEnd` gives up. **Resumable
+end state:** `finishQueueAtEnd` keeps the current index and stops through `pausePlayback` (which marks
+`userPaused`), so the lock-screen Play
+restarts the last track instead of doing nothing, and the end-of-item watchdog does not read the
+finished item as a missed callback. `playMovie` rewinds any item that already reached the end
+(`activePlayerReachedEnd`) for the same reason. **Ownership:** `loadCurrentTrack` bumps
+`loadGeneration`, cancels the in-flight `NSURLConnection` and resets `endRecoveryPending`, so a stream
+fetch (`streamURLForVideo:`) or download belonging to an earlier track cannot start playing over a
+newer selection; `pendingVideoId` is set before the local-file branch so recovery of a cached track is
+not short-circuited, `downloadAndPlayURL:videoId:` uses the id it was called with, and the
+`AVAudioPlayer` delegate and both `AVPlayerItem` notification handlers ignore callbacks whose object
+is no longer the current player. Repeat One and Previous-at-the-start replay the loaded item through
+`replayCurrentTrack` (seek to zero, no second download or play count). `checkForEndedPlayback`, driven
+by the 5s `statsTick:`, advances once if an item is genuinely at its end while the app believes it is
+playing — a normal pause, an interruption (`interrupted`) and a loading track are all excluded. Every
+deliberate pause goes through `pausePlayback`, which marks `userPaused` itself (the in-app button, the
+lock-screen/headset commands and an emptied queue all land there), so tapping Pause just before the
+end is not mistaken for a missed completion; `playMovie` clears the flag again, so resume works from
+any of the same controls.
 
 ### `LTPlayerViewController.h` / `LTPlayerViewController.m`
 The Now Playing tab — the largest UI file (~2000 lines). It builds the full-screen player: large
@@ -516,22 +554,27 @@ A rejected candidate leaves the stored credentials alone and just updates the hi
 re-runs that check by hand. The bar carries `Cancel` on the left (`cancelTapped:`) and `Check` on the right.
 
 ### `LTCookieSignInViewController.h` / `LTCookieSignInViewController.m`
-Cookie sign-in GUI (Settings → Account → Cookies Sign-In). A `UITextView` accepts a bare SAPISID
-value or a full Cookie header, with a placeholder overlay (`textViewDidChange:`) and keyboard insets
+Cookie sign-in GUI (Settings → Account → Cookies Sign-In). A `UITextView` takes the whole YouTube
+Music cookie line (the hint and placeholder ask for `SID=…; HSID=…; SAPISID=…`), with a placeholder overlay (`textViewDidChange:`) and keyboard insets
 on a `UIScrollView` (`keyboardWillShow:` / `keyboardWillHide:`). `signInTapped:` rejects empty input and
 then validates before storing: the candidate header goes through
 `fetchAccountNameWithCookieHeader:` (which authenticates that one request with it, via
 `postToHost:path:body:cookieHeader:completion:`) and only a name coming back lets
-`setCredentialsWithCookieHeader:accountName:` replace the stored credentials. A rejected cookie
-shows an alert and leaves an existing sign-in untouched; a good one is saved with the account name
-and the screen pops back to Settings. `guideTapped:` pushes `LTCookieTutorialViewController`.
+`setCredentialsWithCookieHeader:accountName:` replace the stored credentials. A rejected paste shows
+an alert and leaves an existing sign-in untouched; when `cookieHeaderHasSession:` is NO the alert says
+the whole cookie line rather than the generic failure text: it reports that no account came back and
+points at the fuller paste, without asserting that what was pasted is wrong (nothing has established
+that a lone SAPISID cannot work, only that the server returned no account for it here). A good cookie
+is saved with the account name and the screen pops back to Settings. `guideTapped:` pushes `LTCookieTutorialViewController`.
 
 ### `LTCookieTutorialViewController.h` / `LTCookieTutorialViewController.m`
 The guide behind "How do I get my cookies?": a read-only scrolling `UITextView` (`guideText`) that
-walks through opening music.youtube.com on a desktop, finding the cookie table in the Chrome / Edge /
-Firefox / Safari developer tools, copying the SAPISID (or `__Secure-3PAPISID` / `__Secure-1PAPISID`)
-value and pasting it into Cookies Sign-In, plus notes on whole-cookie-line pastes and keeping the
-cookie valid.
+walks through opening music.youtube.com on a desktop, finding the cookies in the Chrome / Edge /
+Firefox / Safari developer tools, and copying **all** of them as one line (the `cookie` request header
+from the Network tab, or select-all in the Cookies panel) into Cookies Sign-In. It recommends the
+whole line because it carries the session cookies together with SAPISID, allows that a lone SAPISID
+value can be pasted too, and says to come back for all the cookies if no account comes back; plus how
+to keep the cookie valid.
 
 ### `LTTransitionSettings.h` / `LTTransitionSettings.m`
 Reads/writes the transition speed multiplier stored in NSUserDefaults (key `LTTransitionSpeed`; 1.0

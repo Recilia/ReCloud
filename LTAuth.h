@@ -42,6 +42,13 @@ extern NSString *const LTAuthDidChangeNotification;
 // nil when there are none.
 - (NSString *)cookieHeaderFromSharedStorage;
 
+// YES when the header carries a session cookie (SID or a __Secure-*PSID), which
+// is what YouTube uses to identify the account. A paste carrying only SAPISID
+// supplies the hash secret but no session, so this distinguishes an incomplete
+// paste from a cookie the server actually rejected; it is not a verdict on
+// whether such a paste could work.
+- (BOOL)cookieHeaderHasSession:(NSString *)cookieHeader;
+
 // "SAPISIDHASH <time>_<digest>" for the given origin, e.g.
 // "https://music.youtube.com". Returns nil when signed out.
 - (NSString *)authorizationHeaderForOrigin:(NSString *)origin;

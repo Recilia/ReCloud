@@ -271,14 +271,13 @@ static void LTUncaughtExceptionHandler(NSException *e) {
     [center.nextTrackCommand addTarget:self action:@selector(remoteNextCommand:)];
     [center.previousTrackCommand addTarget:self action:@selector(remotePreviousCommand:)];
 
-    // Only expose the 15s fwd/bwd buttons alongside the scrubber (iOS 9.1+).
-    // On earlier versions (7.1-9.0) they replace the track skip/back buttons
-    // on the lock screen, which is undesired.
+    // iOS draws a 15s skip pair *instead of* previous/next as soon as the skip
+    // commands are enabled with preferred intervals — that is what put ⏪15 /
+    // 15⏩ on the lock screen on 9.3.6, not a version check. They stay
+    // unregistered so the transport is always Prev / Play-Pause / Next; the
+    // scrubber comes from changePlaybackPositionCommand and in-app 15s seeking
+    // is unaffected.
     if ([center respondsToSelector:@selector(changePlaybackPositionCommand)]) {
-        center.skipForwardCommand.preferredIntervals = @[ @(15) ];
-        [center.skipForwardCommand addTarget:self action:@selector(remoteSkipForwardCommand:)];
-        center.skipBackwardCommand.preferredIntervals = @[ @(15) ];
-        [center.skipBackwardCommand addTarget:self action:@selector(remoteSkipBackwardCommand:)];
         [center.changePlaybackPositionCommand addTarget:self action:@selector(remoteChangePlaybackPositionCommand:)];
     }
 }
@@ -307,21 +306,6 @@ static void LTUncaughtExceptionHandler(NSException *e) {
 // mid-song (see -rewindToPreviousTrack).
 - (MPRemoteCommandHandlerStatus)remotePreviousCommand:(MPRemoteCommandEvent *)event {
     [[LTPlayerController sharedController] rewindToPreviousTrack];
-    return MPRemoteCommandHandlerStatusSuccess;
-}
-
-- (MPRemoteCommandHandlerStatus)remoteSkipForwardCommand:(MPSkipIntervalCommandEvent *)event {
-    LTPlayerController *controller = [LTPlayerController sharedController];
-    double interval = event.interval > 0 ? event.interval : 15.0;
-    [controller seekToTime:[controller currentTime] + interval];
-    return MPRemoteCommandHandlerStatusSuccess;
-}
-
-- (MPRemoteCommandHandlerStatus)remoteSkipBackwardCommand:(MPSkipIntervalCommandEvent *)event {
-    LTPlayerController *controller = [LTPlayerController sharedController];
-    double interval = event.interval > 0 ? event.interval : 15.0;
-    NSTimeInterval target = [controller currentTime] - interval;
-    [controller seekToTime:target < 0 ? 0.0 : target];
     return MPRemoteCommandHandlerStatusSuccess;
 }
 

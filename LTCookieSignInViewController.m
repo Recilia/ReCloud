@@ -39,8 +39,8 @@
     self.hintLabel.font = [UIFont systemFontOfSize:12];
     self.hintLabel.textColor = [LTTheme secondaryText];
     self.hintLabel.numberOfLines = 0;
-    self.hintLabel.text = @"Paste the SAPISID cookie value from a desktop browser signed into "
-                           "YouTube Music. A full Cookie header works too.";
+    self.hintLabel.text = @"Paste the whole cookie line from a desktop browser signed into "
+                           "YouTube Music — SID=…; HSID=…; SAPISID=…";
     [self.scrollView addSubview:self.hintLabel];
 
     self.cookieField = [[UITextView alloc] init];
@@ -63,7 +63,7 @@
     self.placeholderLabel = [[UILabel alloc] init];
     self.placeholderLabel.font = [UIFont systemFontOfSize:13];
     self.placeholderLabel.textColor = [LTTheme secondaryText];
-    self.placeholderLabel.text = @"SAPISID=…";
+    self.placeholderLabel.text = @"SID=…; HSID=…; SAPISID=…";
     self.placeholderLabel.userInteractionEnabled = NO;
     [self.cookieField addSubview:self.placeholderLabel];
 
@@ -195,7 +195,7 @@
                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!text.length) {
         [self showMessage:@"Nothing to sign in with"
-                     body:@"Paste the SAPISID cookie value first, or tap How do I get my cookies? for the steps."];
+                     body:@"Paste the whole YouTube Music cookie line first, or tap How do I get my cookies? for the steps."];
         return;
     }
 
@@ -217,8 +217,16 @@
 
         if (!name.length) {
             LTLog(@"AUTH cookie sign-in rejected: %@", error);
-            [strongSelf showMessage:@"That cookie did not work"
-                               body:@"YouTube Music did not accept it, so nothing was changed. Check that you copied the SAPISID value from a browser signed into the account, then try again."];
+            if (![[LTAuth sharedAuth] cookieHeaderHasSession:candidate]) {
+                // The paste carried the hash secret but no session cookies, and
+                // the server returned no account for it. Say that, and point at
+                // the fuller paste, without claiming the value itself is wrong.
+                [strongSelf showMessage:@"No account came back"
+                                   body:@"YouTube Music returned no account for that paste, so nothing was changed. A whole cookie line (SID=…; HSID=…; SAPISID=…) is the most reliable thing to paste: tap How do I get my cookies? and copy the cookies as shown in step 4."];
+                return;
+            }
+            [strongSelf showMessage:@"No account came back"
+                               body:@"YouTube Music returned no account for that cookie, so nothing was changed. Check that the browser is signed into the account you want, copy a fresh cookie line, and try again."];
             return;
         }
         [[LTAuth sharedAuth] setCredentialsWithCookieHeader:candidate accountName:name];

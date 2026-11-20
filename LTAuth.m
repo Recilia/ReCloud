@@ -64,7 +64,11 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
                                                     options:0
                                                       range:NSMakeRange(0, cookieHeader.length)];
     if (match.numberOfRanges < 3) return nil;
-    return [cookieHeader substringWithRange:[match rangeAtIndex:2]];
+    // A pasted header often has "SAPISID=value ;" or a trailing space, and a
+    // stray space in the value breaks the SAPISIDHASH digest for a cookie that
+    // is otherwise correct.
+    NSString *value = [cookieHeader substringWithRange:[match rangeAtIndex:2]];
+    return [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
 @implementation LTAuth
@@ -104,17 +108,72 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
                                                         object:nil];
 }
 
-- (NSString *)normalizedCookieHeaderFromInput:(NSString *)input {
-    NSString *trimmed = [input stringByTrimmingCharactersInSet:
-                         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (!trimmed.length) return nil;
-
-    if ([trimmed rangeOfString:@"="].location == NSNotFound) {
-        // A bare token: treat it as the SAPISID value and synthesize the
-        // cookie pair YouTube Music expects.
-        trimmed = [NSString stringWithFormat:@"SAPISID=%@; __Secure-3PAPISID=%@", trimmed, trimmed];
+// One pasted line reduced to the part that belongs in a Cookie: header — the
+// devtools "Cookie:" name is stripped, quotes and tabs are dropped elsewhere.
+- (NSString *)cookieEntryFromPastedLine:(NSString *)line {
+    NSCharacterSet *space = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    NSString *entry = [line stringByTrimmingCharactersInSet:space];
+    if (!entry.length) return nil;
+    if ([[entry lowercaseString] hasPrefix:@"cookie:"]) {
+        entry = [entry substringFromIndex:@"cookie:".length];
+        entry = [entry stringByTrimmingCharactersInSet:space];
     }
-    return trimmed;
+    return entry;
+}
+
+// A paste arrives in whatever shape the user happened to copy: a bare SAPISID
+// token, a "Cookie: …" header line, one cookie per line, or a quoted value.
+// Sending any of those verbatim makes YouTube reject a cookie that is actually
+// valid, which is exactly how a correct paste looked like a wrong one.
+- (NSString *)normalizedCookieHeaderFromInput:(NSString *)input {
+    if (!input.length) return nil;
+    NSCharacterSet *space = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    NSString *text = [input stringByTrimmingCharactersInSet:space];
+    if (!text.length) return nil;
+
+    // A value copied with its surrounding quotes.
+    if (text.length >= 2) {
+        unichar first = [text characterAtIndex:0];
+        unichar last = [text characterAtIndex:(NSUInteger)(text.length - 1)];
+        BOOL doubleQuoted = (first == '"' && last == '"');
+        BOOL singleQuoted = (first == '\'' && last == '\'');
+        if ((doubleQuoted || singleQuoted) && text.length > 2) {
+            text = [text substringWithRange:NSMakeRange(1, (NSUInteger)(text.length - 2))];
+            text = [text stringByTrimmingCharactersInSet:space];
+        }
+    }
+
+    NSArray *lines = [text componentsSeparatedByCharactersInSet:
+                      [NSCharacterSet newlineCharacterSet]];
+    if (lines.count > 1) {
+        // Several requests headers / cookies pasted together: keep the pairs.
+        NSMutableArray *parts = [NSMutableArray array];
+        for (NSString *line in lines) {
+            NSString *entry = [self cookieEntryFromPastedLine:line];
+            if (!entry.length) continue;
+            if ([entry rangeOfString:@"="].location == NSNotFound) continue;
+            [parts addObject:entry];
+        }
+        if (parts.count) text = [parts componentsJoinedByString:@"; "];
+    } else {
+        NSString *entry = [self cookieEntryFromPastedLine:text];
+        if (entry.length) text = entry;
+    }
+
+    text = [text stringByReplacingOccurrencesOfString:@"\t" withString:@" "];
+    text = [text stringByTrimmingCharactersInSet:space];
+    while (text.length && [text hasSuffix:@";"]) {
+        text = [[text substringToIndex:(NSUInteger)(text.length - 1)]
+                stringByTrimmingCharactersInSet:space];
+    }
+    if (!text.length) return nil;
+
+    if ([text rangeOfString:@"="].location == NSNotFound) {
+        // A bare token: treat it as the SAPISID value and synthesize the cookie
+        // pairs YouTube Music expects.
+        text = [NSString stringWithFormat:@"SAPISID=%@; __Secure-3PAPISID=%@", text, text];
+    }
+    return text;
 }
 
 - (void)setCredentialsWithCookieHeader:(NSString *)cookieHeader
@@ -143,6 +202,14 @@ static NSString *LTAuthCookieValueForName(NSString *cookieHeader, NSString *name
     // that to tell one candidate from the next without re-checking.
     NSArray *sorted = [pairs sortedArrayUsingSelector:@selector(compare:)];
     return [sorted componentsJoinedByString:@"; "];
+}
+
+- (BOOL)cookieHeaderHasSession:(NSString *)cookieHeader {
+    if (!cookieHeader.length) return NO;
+    if (LTAuthCookieValueForName(cookieHeader, @"SID").length) return YES;
+    if (LTAuthCookieValueForName(cookieHeader, @"__Secure-1PSID").length) return YES;
+    if (LTAuthCookieValueForName(cookieHeader, @"__Secure-3PSID").length) return YES;
+    return NO;
 }
 
 - (NSString *)authorizationHeaderForOrigin:(NSString *)origin {
