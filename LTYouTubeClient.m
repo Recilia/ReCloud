@@ -167,6 +167,33 @@ static dispatch_queue_t LTArtDiskCacheQueue(void) {
     return queue;
 }
 
+// Serial queue for reading cached covers back. Reading the file itself is cheap,
+// but trimming its padding decodes the whole image and scans every pixel, and
+// that used to happen on the main thread once per cover while scrolling. One at
+// a time keeps the peak memory of a burst of covers bounded on a 512 MB device.
+static dispatch_queue_t LTArtDecodeQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.legacymusic.artdecode", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+// Serial queue for reading and parsing API responses. Parsing one feed took tens
+// of milliseconds on an iPhone 4S and used to happen on the main thread; one
+// response at a time also keeps the peak memory of a large JSON tree bounded.
+static NSOperationQueue *LTJSONParseQueue(void) {
+    static NSOperationQueue *queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = [[NSOperationQueue alloc] init];
+        queue.name = @"com.legacymusic.internetube";
+        queue.maxConcurrentOperationCount = 1;
+    });
+    return queue;
+}
+
 // YES for cache entries only: 32 lowercase hex characters plus ".jpg".
 static BOOL LTIsManagedArtFileName(NSString *name) {
     if (![name hasSuffix:@".jpg"]) return NO;
@@ -269,22 +296,26 @@ static BOOL LTIsManagedArtFileName(NSString *name) {
     }
     [request setHTTPBody:payload];
 
-    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue]
+    // The body is read, decoded to text and JSON-parsed on a background queue;
+    // only the finished result hops to the main queue, which is where every
+    // caller already expected to run. Passing [NSOperationQueue mainQueue] here
+    // put all of that on the main thread, so a large feed response stalled the
+    // interface for tens of milliseconds on an iPhone 4S.
+    [NSURLConnection sendAsynchronousRequest:request queue:LTJSONParseQueue()
                            completionHandler:^(NSURLResponse *response, NSData *data, NSError *connectionError) {
         NSInteger statusCode = [response isKindOfClass:[NSHTTPURLResponse class]]
                              ? [(NSHTTPURLResponse *)response statusCode] : 0;
         NSString *bodyText = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-        if (connectionError) {
-            if (completion) completion(nil, statusCode, bodyText, connectionError);
-            return;
+        NSError *error = connectionError;
+        id obj = nil;
+        if (!error) {
+            NSError *parseError = nil;
+            obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
+            if (!obj) error = parseError;
         }
-        NSError *parseError = nil;
-        id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
-        if (!obj) {
-            if (completion) completion(nil, statusCode, bodyText, parseError);
-            return;
-        }
-        if (completion) completion(obj, statusCode, bodyText, nil);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(obj, statusCode, bodyText, error);
+        });
     }];
 }
 
@@ -1931,32 +1962,40 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
         return;
     }
     NSString *diskPath = [self diskCachePathForURL:urlString];
-    UIImage *diskImage = [UIImage imageWithContentsOfFile:diskPath];
-    if (diskImage) {
-        LTLog(@"IMG disk-hit url=%@", urlString);
-        diskImage = LTTrimmedArtworkImage(diskImage, [urlString rangeOfString:@"i.ytimg.com"].location != NSNotFound);
-        [self.imageCache setObject:diskImage forKey:urlString cost:LTDecodedImageCost(diskImage)];
-        // Refresh the timestamp (at most hourly) so covers that are actually
-        // being looked at survive eviction longer than untouched ones.
-        dispatch_async(LTArtDiskCacheQueue(), ^{
-            NSFileManager *fm = [NSFileManager defaultManager];
-            NSDictionary *attrs = [fm attributesOfItemAtPath:diskPath error:NULL];
-            NSDate *modified = [attrs objectForKey:NSFileModificationDate];
-            if (!modified || -[modified timeIntervalSinceNow] > 3600.0) {
-                [fm setAttributes:@{NSFileModificationDate: [NSDate date]}
-                     ofItemAtPath:diskPath
-                            error:NULL];
-            }
-        });
-        if (completion) completion(diskImage);
-        return;
-    }
     NSString *fallback = nil;
     if ([urlString hasSuffix:@"maxresdefault.jpg"]) {
         fallback = [urlString stringByReplacingOccurrencesOfString:@"maxresdefault.jpg"
                                                         withString:@"sddefault.jpg"];
     }
-    [self fetchImageAtURL:urlString fallbackURL:fallback diskPath:diskPath cacheKey:urlString completion:completion];
+    // Decoding and trimming a cached cover is a full pixel scan, so it happens on
+    // the artwork queue rather than on the calling thread, which is the main
+    // thread whenever a cell asks for its artwork. Only the in-memory hit above
+    // still answers synchronously.
+    BOOL allowCenterCrop = [urlString rangeOfString:@"i.ytimg.com"].location != NSNotFound;
+    dispatch_async(LTArtDecodeQueue(), ^{
+        UIImage *diskImage = [UIImage imageWithContentsOfFile:diskPath];
+        if (!diskImage) {
+            [self fetchImageAtURL:urlString fallbackURL:fallback diskPath:diskPath
+                         cacheKey:urlString completion:completion];
+            return;
+        }
+        LTLog(@"IMG disk-hit url=%@", urlString);
+        UIImage *trimmed = LTTrimmedArtworkImage(diskImage, allowCenterCrop);
+        [self.imageCache setObject:trimmed forKey:urlString cost:LTDecodedImageCost(trimmed)];
+        // Refresh the timestamp (at most hourly) so covers that are actually
+        // being looked at survive eviction longer than untouched ones.
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:diskPath error:NULL];
+        NSDate *modified = [attrs objectForKey:NSFileModificationDate];
+        if (!modified || -[modified timeIntervalSinceNow] > 3600.0) {
+            [fm setAttributes:@{NSFileModificationDate: [NSDate date]}
+                 ofItemAtPath:diskPath
+                        error:NULL];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(trimmed);
+        });
+    });
 }
 
 - (void)fetchImageAtURL:(NSString *)urlString
@@ -2252,14 +2291,26 @@ static UIImage *LTTrimmedArtworkImage(UIImage *image, BOOL allowCenterCrop) {
 - (NSString *)listThumbnailURL:(NSString *)urlString {
     if (![urlString isKindOfClass:[NSString class]] || urlString.length < 8) return urlString;
     // i.ytimg.com paths stay as-is (sddefault is already the disk-cached grade).
+    // Fast paths first: this runs for every row that scrolls past, and compiling
+    // a regular expression per call cost more than the substitution it guarded.
+    if ([urlString rangeOfString:@"w"].location == NSNotFound) return urlString;
+    if ([urlString rangeOfString:@"=w320-h320"].location != NSNotFound ||
+        [urlString rangeOfString:@"/w320-h320"].location != NSNotFound) {
+        return urlString;
+    }
+    static NSArray *patterns = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        patterns = @[
+            @[[NSRegularExpression regularExpressionWithPattern:@"=w\\d+-h\\d+" options:0 error:nil],
+              @"=w320-h320"],
+            @[[NSRegularExpression regularExpressionWithPattern:@"/w\\d+-h\\d+" options:0 error:nil],
+              @"/w320-h320"],
+        ];
+    });
     NSMutableString *result = [urlString mutableCopy];
-    NSArray *patterns = @[
-        @[@"=w\\d+-h\\d+", @"=w320-h320"],
-        @[@"/w\\d+-h\\d+", @"/w320-h320"],
-    ];
     for (NSArray *pair in patterns) {
-        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:[pair objectAtIndex:0]
-                                                                                options:0 error:nil];
+        NSRegularExpression *regex = [pair objectAtIndex:0];
         [regex replaceMatchesInString:result options:0 range:NSMakeRange(0, result.length)
                          withTemplate:[pair objectAtIndex:1]];
     }

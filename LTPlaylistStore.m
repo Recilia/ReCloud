@@ -1,6 +1,7 @@
 #import "LTPlaylistStore.h"
 #import "LTYouTubeClient.h"
 #import "LTLog.h"
+#import <UIKit/UIKit.h>
 
 #define kLTListenedSongIDsKey @"LTListenedSongIDs2"
 
@@ -31,6 +32,12 @@ NSString *const LTRecentsDidChangeNotification = @"LTRecentsDidChangeNotificatio
 @property (nonatomic, strong) NSMutableArray *playlists;
 // Persistent pending queue (LTDownloadItem). Survives relaunch.
 @property (nonatomic, strong) NSMutableArray *downloadQueue;
+// Listening stats live in memory and are flushed periodically: the plist used to
+// be read and rewritten in full on every five-second tick while a track played.
+@property (nonatomic, strong) NSMutableDictionary *statsCache;
+@property (nonatomic, assign) BOOL statsDirty;
+@property (nonatomic, assign) NSTimeInterval lastStatsWrite;
+- (void)flushListeningStats;
 @property (nonatomic, strong) NSURLConnection *downloadConnection;
 @property (nonatomic, strong) NSMutableData *downloadData;
 @property (nonatomic, copy) NSString *downloadingVideoId;
@@ -77,6 +84,12 @@ NSString *const LTRecentsDidChangeNotification = @"LTRecentsDidChangeNotificatio
         [self loadLibrary];
         [self loadArtistAvatars];
         [self loadDownloadQueue];
+        // Never leave accumulated listening time behind when the app is sent to
+        // the background or the phone is locked.
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(flushListeningStats)
+                                                     name:UIApplicationWillResignActiveNotification
+                                                   object:nil];
     }
     return self;
 }
@@ -472,17 +485,32 @@ NSString *const LTRecentsDidChangeNotification = @"LTRecentsDidChangeNotificatio
 }
 
 - (NSMutableDictionary *)statsFileDict {
+    if (_statsCache) return _statsCache;
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:[self statsFilePath]];
-    if ([dict isKindOfClass:[NSDictionary class]]) {
-        return [NSMutableDictionary dictionaryWithDictionary:dict];
-    }
-    return [NSMutableDictionary dictionary];
+    _statsCache = [dict isKindOfClass:[NSDictionary class]]
+        ? [NSMutableDictionary dictionaryWithDictionary:dict]
+        : [NSMutableDictionary dictionary];
+    return _statsCache;
 }
 
 - (void)writeStatsFileDict:(NSDictionary *)dict {
+    _statsDirty = NO;
+    _lastStatsWrite = [NSDate timeIntervalSinceReferenceDate];
     if (![dict writeToFile:[self statsFilePath] atomically:YES]) {
         LTLog(@"STATS write failed");
     }
+}
+
+- (void)flushListeningStatsIfDue {
+    if (!_statsDirty || !_statsCache) return;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (_lastStatsWrite > 0 && now - _lastStatsWrite < 10.0) return;
+    [self writeStatsFileDict:_statsCache];
+}
+
+- (void)flushListeningStats {
+    if (!_statsDirty || !_statsCache) return;
+    [self writeStatsFileDict:_statsCache];
 }
 
 - (NSMutableDictionary *)statsEntryForVideoId:(NSString *)videoId inDict:(NSMutableDictionary *)dict {
@@ -523,10 +551,16 @@ NSString *const LTRecentsDidChangeNotification = @"LTRecentsDidChangeNotificatio
     if (track.artist.length) [entry setObject:track.artist forKey:@"artist"];
     if (track.album.length) [entry setObject:track.album forKey:@"album"];
     if (track.thumbnailURL.length) [entry setObject:track.thumbnailURL forKey:@"thumbnailURL"];
-    [self writeStatsFileDict:dict];
+    // Coalesced: seconds arrive every few seconds, and rewriting the whole file
+    // on each of them was constant flash traffic while music played.
+    _statsDirty = YES;
+    [self flushListeningStatsIfDue];
 }
 
 - (void)clearListeningStats {
+    _statsCache = nil;
+    _statsDirty = NO;
+    _lastStatsWrite = 0;
     [[NSFileManager defaultManager] removeItemAtPath:[self statsFilePath] error:nil];
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kLTListenedSongIDsKey];
     [[NSNotificationCenter defaultCenter] postNotificationName:LTRecentsDidChangeNotification object:self];

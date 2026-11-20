@@ -292,11 +292,40 @@ static UIBezierPath *LTPathFromSVGPathData(NSString *d) {
 
 #pragma mark - Rendering
 
+// Rendering an icon walks its SVG path data, builds bezier paths and rasterises
+// them. That used to happen every time an icon was asked for, which is once per
+// cell and per tab switch while scrolling, so finished bitmaps are now kept.
+// Icons are a few KB each, hence the generous count limit.
+static NSCache *LTLucideImageCache(void) {
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 128;
+    });
+    return cache;
+}
+
+static NSString *LTLucideColorKey(UIColor *color) {
+    CGColorRef cg = color.CGColor;
+    const CGFloat *components = cg ? CGColorGetComponents(cg) : NULL;
+    size_t count = cg ? CGColorGetNumberOfComponents(cg) : 0;
+    if (!components || count == 0) return @"none";
+    NSMutableString *key = [NSMutableString stringWithCapacity:count * 6];
+    for (size_t i = 0; i < count; i++) {
+        [key appendFormat:@"%.3f,", components[i]];
+    }
+    return key;
+}
+
 + (UIImage *)iconNamed:(NSString *)name size:(CGFloat)size color:(UIColor *)color {
     if (name.length == 0 || size <= 0.0) return nil;
+    UIColor *tint = color ?: [UIColor whiteColor];
+    NSString *key = [NSString stringWithFormat:@"%@|%.1f|%@", name, size, LTLucideColorKey(tint)];
+    UIImage *cached = [LTLucideImageCache() objectForKey:key];
+    if (cached) return cached;
     NSArray *elements = LTLucideIconDefinitions()[name];
     if (!elements.count) return nil;
-    UIColor *tint = color ?: [UIColor whiteColor];
 
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
@@ -328,6 +357,7 @@ static UIBezierPath *LTPathFromSVGPathData(NSString *d) {
     }
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
+    if (image) [LTLucideImageCache() setObject:image forKey:key];
     return image;
 }
 

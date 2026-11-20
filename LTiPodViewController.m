@@ -303,7 +303,9 @@ typedef NS_ENUM(NSInteger, LTiPodWheelButton) {
 
     // Capture the old screen so we can cross-fade (iOS 6 safe).
     UIView *oldView = currentRoot.view;
-    UIGraphicsBeginImageContext(oldView.bounds.size);
+    // Device scale: the old 1x context made the cross-fade visibly soft on a
+    // Retina screen.
+    UIGraphicsBeginImageContextWithOptions(oldView.bounds.size, YES, 0.0f);
     [oldView.layer renderInContext:UIGraphicsGetCurrentContext()];
     UIImage *snap = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();

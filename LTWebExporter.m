@@ -66,10 +66,21 @@ static NSString *const kWebDataMarker = @"<!--WEB_DATA-->";
                                          options:NSDataReadingUncached
                                            error:nil];
     if (!data.length) return nil;
-    UIImage *image = [UIImage imageWithData:data];
-    if (!image) return nil;
-    NSData *jpeg = UIImageJPEGRepresentation(image, 0.85);
-    if (!jpeg) return nil;
+    // i.ytimg.com serves JPEG, and the export only needs a .jpg on disk, so the
+    // bytes are written as they arrived. Decoding a full-size cover and
+    // re-encoding it at 0.85 used to run once per track, which was the slowest
+    // part of building a mini instance on an iPhone 4S (and cost a second
+    // generation of quality loss for nothing).
+    NSData *jpeg = data;
+    BOOL alreadyJPEG = data.length > 2 &&
+                       ((const unsigned char *)data.bytes)[0] == 0xFF &&
+                       ((const unsigned char *)data.bytes)[1] == 0xD8;
+    if (!alreadyJPEG) {
+        UIImage *image = [UIImage imageWithData:data];
+        if (!image) return nil;
+        jpeg = UIImageJPEGRepresentation(image, 0.85);
+        if (!jpeg) return nil;
+    }
     NSString *name = [NSString stringWithFormat:@"art%ld.jpg", (long)counter];
     NSString *path = [artDir stringByAppendingPathComponent:name];
     if ([jpeg writeToFile:path atomically:YES]) return name;

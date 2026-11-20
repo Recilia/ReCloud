@@ -50,6 +50,14 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
 @property (nonatomic, strong) NSDictionary *updateRelease;
 @property (nonatomic, copy) NSString *updateVersion;
 @property (nonatomic, copy) NSString *downloadedUpdatePath;
+// Both storage figures come from walking the audio and artwork directories.
+// -tableView:cellForRowAtIndexPath: used to do that for every row that appeared,
+// re-statting the whole cache while scrolling, so they are measured once per
+// appearance on a background queue instead.
+@property (nonatomic, assign) BOOL storageStatsLoaded;
+@property (nonatomic, assign) BOOL loadingStorageStats;
+@property (nonatomic, assign) NSInteger cachedOfflineFiles;
+@property (nonatomic, assign) double cachedArtworkMB;
 @end
 
 @implementation LTSettingsViewController
@@ -85,6 +93,23 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     [super viewWillAppear:animated];
     [self applyTheme];
     [self.tableView reloadData];
+    [self refreshStorageStats];
+}
+
+- (void)refreshStorageStats {
+    if (self.loadingStorageStats) return;
+    self.loadingStorageStats = YES;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSInteger files = [[LTPlaylistStore sharedStore] offlineFileCount];
+        double mb = (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.loadingStorageStats = NO;
+            self.storageStatsLoaded = YES;
+            self.cachedOfflineFiles = files;
+            self.cachedArtworkMB = mb;
+            [self.tableView reloadData];
+        });
+    });
 }
 
 - (void)authDidChange:(NSNotification *)notification {
@@ -218,11 +243,16 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         }
     }
     [[NSNotificationCenter defaultCenter] postNotificationName:LTPlaylistsDidChangeNotification object:store];
+    self.cachedOfflineFiles = 0;
     [self.tableView reloadData];
 }
 
 - (void)clearArtworkCacheTapped {
-    double mb = (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
+    // Measuring the artwork directory here would stat every cached cover on the
+    // main thread before the alert could even appear.
+    double mb = self.storageStatsLoaded
+        ? self.cachedArtworkMB
+        : (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
     UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Clear Cached Artwork"
                                                     message:[NSString stringWithFormat:
                                 @"Remove the %.1f MB of cached album art and thumbnails? They are downloaded again when needed. Offline downloads and playlist covers are not affected.", mb]
@@ -451,6 +481,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         [LTYouTubeClient clearDiskArtworkCacheWithCompletion:^{
             [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:LTSettingsSectionData]
                          withRowAnimation:UITableViewRowAnimationNone];
+            [self refreshStorageStats];
         }];
     }
     if (alertView.tag == 966 && buttonIndex == 1) {
@@ -696,7 +727,9 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 1) {
                 cell.textLabel.text = @"Offline Downloads";
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"%d files", (int)[store offlineFileCount]];
+                cell.detailTextLabel.text = self.storageStatsLoaded
+                    ? [NSString stringWithFormat:@"%d files", (int)self.cachedOfflineFiles]
+                    : @"…";
             } else if (indexPath.row == 2) {
                 cell.textLabel.text = @"Sync with Another Device";
                 cell.detailTextLabel.text = @"";
@@ -709,8 +742,9 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 5) {
                 cell.textLabel.text = @"Clear Cached Artwork";
-                double mb = (double)[LTYouTubeClient diskArtworkCacheSize] / (1024.0 * 1024.0);
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f MB", mb];
+                cell.detailTextLabel.text = self.storageStatsLoaded
+                    ? [NSString stringWithFormat:@"%.1f MB", self.cachedArtworkMB]
+                    : @"…";
                 cell.textLabel.textColor = [UIColor redColor];
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else if (indexPath.row == 6) {

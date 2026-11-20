@@ -15,6 +15,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ReinMusic
 ReinMusic_FILES = main.m \
+	LTLog.m \
 	LTAppDelegate.m \
 	LTModel.m \
 	LTAuth.m \

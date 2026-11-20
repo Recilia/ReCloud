@@ -73,11 +73,33 @@ otherwise falls back to `Documents/LegacyMusic` inside the app sandbox, so one b
 jailbroken iOS 6–9 and sandboxed modern iOS. `LTTempDirectory` likewise prefers `/tmp` and falls
 back to `NSTemporaryDirectory()`. Used for playlists, downloads, artwork and log files.
 
-### `LTLog.h`
-Header-only logging helper (no `.m`). The `static inline` variadic function `LTLog(fmt, ...)`
-formats the message, mirrors it to `NSLog`, and appends a timestamped line to `reinmusic.log` in
-`LTTempDirectory()` (creating the file on demand). This gives a persistent on-device log that is
-easy to pull off a jailbroken device.
+### `LTLog.h` / `LTLog.m`
+The `static inline` variadic function `LTLog(fmt, ...)` formats the message, mirrors it to `NSLog`,
+and appends a timestamped line to `reinmusic.log` in `LTTempDirectory()` (creating the file on
+demand), giving a persistent on-device log that is easy to pull off a jailbroken device. The file
+side lives in `LTLog.m` so every translation unit shares one open `NSFileHandle` behind a lock; the
+earlier header-only version opened, seeked, wrote and closed the file for every line, four syscalls
+each on paths that log several times a second. The log is capped at 1 MB and truncated in place
+once it reaches that size, so a long session cannot fill a 16 GB device.
+
+### Performance rules for the hot paths
+On a 512 MB / single-core-ish device the wins come from keeping work off the main thread in the
+places that run per row, per cover and per tick. The invariants worth preserving:
+
+- Nothing does filesystem scans, JSON parsing, image decoding or file writes on the main thread.
+  API responses are read and parsed on `LTJSONParseQueue()` in `LTYouTubeClient` (only the finished
+  result hops back to the main queue, where every caller already expects to run); cached covers are
+  read and trimmed on `LTArtDecodeQueue()`; JPEG encoding and cache pruning stay on
+  `LTArtDiskCacheQueue()`; the Settings storage figures are measured on a background queue and
+  cached per appearance instead of being re-stat'ed from `cellForRowAtIndexPath:`.
+- `listThumbnailURL:` compiles its two regular expressions once and returns immediately when the URL
+  is already at the `w320-h320` grade, since it runs for every row that scrolls past.
+- `LTLucideIcons +iconNamed:size:color:` caches rendered bitmaps per name, size and colour; it used
+  to re-parse SVG path data and re-rasterise on every call.
+- Listening stats are held in memory and written at most every 10 s (or immediately when the app
+  resigns active) instead of read-modify-writing the whole plist every 5 s playback tick.
+- The web exporter writes the JPEG it downloaded as-is; decoding and re-encoding a full-size cover
+  per track was the slowest part of building a mini instance.
 
 ### `LTSafeArea.h` / `LTSafeArea.m`
 Safe-area helper for notched devices (iPhone X and newer). Because the armv7 slice is compiled
