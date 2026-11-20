@@ -30,6 +30,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 @property (nonatomic, assign) NSInteger audioBitrateKbps;
 @property (nonatomic, strong) NSTimer *statsTimer;
 @property (nonatomic, assign) NSTimeInterval statsBaseTime;
+// Continuous-playback recovery (see -recoverFromPlaybackFailure:videoId:).
+@property (nonatomic, assign) NSInteger consecutiveLoadFailures;
+@property (nonatomic, copy) NSString *lastRetriedVideoId;
+@property (nonatomic, assign) BOOL suppressTrackStats;
+@property (nonatomic, strong) NSTimer *streamWatchdog;
 @end
 
 @implementation LTPlayerController
@@ -131,6 +136,8 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 
 - (void)statsTick:(NSTimer *)timer {
     [self commitStatsDelta];
+    // Keep the lock screen / Control Center progress bar in step with playback.
+    if ([self playerIsPlaying]) [self updateNowPlayingInfo];
 }
 
 - (void)commitStatsDelta {
@@ -171,6 +178,9 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 - (void)stopMoviePlayer {
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:AVPlayerItemDidPlayToEndTimeNotification
+                                                  object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:AVPlayerItemFailedToPlayToEndTimeNotification
                                                   object:nil];
     [self.moviePlayer pause];
     self.moviePlayer = nil;
@@ -217,6 +227,9 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     [self configureAudioSession];
     self.isLoading = NO;
     self.userPaused = NO;
+    // A player that actually starts ends the failure streak.
+    self.consecutiveLoadFailures = 0;
+    self.lastRetriedVideoId = nil;
     self.statsBaseTime = [self playerCurrentTime];
     [self startActivePlayer];
     [self updateNowPlayingInfo];
@@ -444,10 +457,16 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 - (void)loadCurrentTrack {
     LTTrack *track = [self currentTrack];
     if (!track) return;
-    [[LTPlaylistStore sharedStore] recordRecentTrack:track];
-    [[LTPlaylistStore sharedStore] recordTrackPlay:track];
+    if (!self.suppressTrackStats) {
+        [[LTPlaylistStore sharedStore] recordRecentTrack:track];
+        [[LTPlaylistStore sharedStore] recordTrackPlay:track];
+        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerTrackDidChangeNotification object:self];
+    }
+    self.suppressTrackStats = NO;
     self.statsBaseTime = 0;
-    [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerTrackDidChangeNotification object:self];
+    // Name the new track on the lock screen straight away, before the stream
+    // (and its artwork) arrives.
+    [self updateNowPlayingInfo];
 
     self.nowPlayingArtwork = nil;
     if (track.thumbnailURL.length) {
@@ -481,7 +500,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         if (error) {
             LTLog(@"ERROR fetch stream: %@", error);
             strongSelf.isLoading = NO;
-            [strongSelf showError:error];
+            [strongSelf recoverFromPlaybackFailure:error videoId:track.videoId];
             return;
         }
         strongSelf.pendingMuxed = muxedStream;
@@ -505,7 +524,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     if (!player) {
         LTLog(@"AUDIOPLAYER init error: %@", error);
         self.isLoading = NO;
-        [self showError:error];
+        [self recoverFromPlaybackFailure:error videoId:self.pendingVideoId];
         return;
     }
     self.audioPlayer = player;
@@ -527,6 +546,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
                                              selector:@selector(playerItemDidEnd:)
                                                  name:AVPlayerItemDidPlayToEndTimeNotification
                                                object:item];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(playerItemFailed:)
+                                                 name:AVPlayerItemFailedToPlayToEndTimeNotification
+                                               object:item];
     self.moviePlayer = [[AVPlayer alloc] initWithPlayerItem:item];
     if ([self.moviePlayer respondsToSelector:@selector(setVolume:)]) {
         self.moviePlayer.volume = self.volume; // iOS 7+ only
@@ -538,6 +561,95 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 - (void)playerItemDidEnd:(NSNotification *)notification {
     LTLog(@"FINISH avplayer item end");
     [self nextTrack];
+}
+
+- (void)playerItemFailed:(NSNotification *)notification {
+    NSError *error = [[notification userInfo] objectForKey:AVPlayerItemFailedToPlayToEndTimeErrorKey];
+    LTLog(@"FINISH avplayer item failed: %@", error);
+    [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
+}
+
+#pragma mark - Failure recovery
+
+// Continuous playback: a stream that cannot be fetched, or a player that dies
+// mid-track, must not end the listening session. The track is retried once with
+// a freshly fetched stream URL (the previous URL may have expired), and after
+// that the player skips ahead. Only a run of failures — i.e. the network is
+// really gone — stops playback, and then it says why.
+static const NSInteger LTPlaybackFailureStreakLimit = 3;
+
+- (void)recoverFromPlaybackFailure:(NSError *)error videoId:(NSString *)videoId {
+    LTTrack *track = [self currentTrack];
+    if (!track) {
+        self.isLoading = NO;
+        [self pausePlayback];
+        return;
+    }
+    if (videoId.length && track.videoId.length && ![videoId isEqualToString:track.videoId]) {
+        // The failure belongs to a track the user has already left.
+        return;
+    }
+    self.consecutiveLoadFailures += 1;
+    LTLog(@"RECOVER failure %d/%d videoId=%@ err=%@",
+          (int)self.consecutiveLoadFailures, (int)LTPlaybackFailureStreakLimit,
+          track.videoId, error.localizedDescription ?: @"(no error)");
+    if (self.consecutiveLoadFailures > LTPlaybackFailureStreakLimit) {
+        self.isLoading = NO;
+        self.consecutiveLoadFailures = 0;
+        [self pausePlayback];
+        NSError *shown = error ?: [NSError errorWithDomain:NSURLErrorDomain
+                                                      code:NSURLErrorNotConnectedToInternet
+                                                  userInfo:@{NSLocalizedDescriptionKey: @"Playback keeps failing. Check the connection."}];
+        [self showError:shown];
+        return;
+    }
+    BOOL alreadyRetried = (track.videoId.length && [self.lastRetriedVideoId isEqualToString:track.videoId]);
+    if (!alreadyRetried) {
+        self.lastRetriedVideoId = track.videoId;
+        LTLog(@"RECOVER retrying %@ with a fresh stream", track.videoId);
+        self.suppressTrackStats = YES;
+        [self loadCurrentTrack];
+        return;
+    }
+    self.lastRetriedVideoId = nil;
+    LTLog(@"RECOVER skipping to the next track");
+    [self nextTrack];
+}
+
+#pragma mark - Download watchdog
+
+// A connection that stops sending bytes (cell hand-off, Wi-Fi dropping) can sit
+// silent until the 120s request timeout, which is far too long between songs.
+// Any 30s gap with no data restarts the track instead.
+- (void)resetStreamWatchdog {
+    [self.streamWatchdog invalidate];
+    self.streamWatchdog = nil;
+    if (!self.streamConnection) return;
+    self.streamWatchdog = [NSTimer scheduledTimerWithTimeInterval:30.0
+                                                          target:self
+                                                        selector:@selector(streamWatchdogFired:)
+                                                        userInfo:nil
+                                                         repeats:NO];
+    [[NSRunLoop mainRunLoop] addTimer:self.streamWatchdog forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopStreamWatchdog {
+    [self.streamWatchdog invalidate];
+    self.streamWatchdog = nil;
+}
+
+- (void)streamWatchdogFired:(NSTimer *)timer {
+    self.streamWatchdog = nil;
+    NSURLConnection *connection = self.streamConnection;
+    if (!connection) return;
+    LTLog(@"DL_STALL no data for 30s, retrying track");
+    self.streamConnection = nil;
+    [connection cancel];
+    self.isLoading = NO;
+    NSError *error = [NSError errorWithDomain:NSURLErrorDomain
+                                          code:NSURLErrorTimedOut
+                                      userInfo:@{NSLocalizedDescriptionKey: @"The stream stopped sending data."}];
+    [self recoverFromPlaybackFailure:error videoId:self.streamVideoId];
 }
 
 - (void)downloadAndPlayURL:(NSString *)urlString videoId:(NSString *)videoId {
@@ -556,18 +668,36 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     BOOL hasN = ([urlString rangeOfString:@"&n="].location != NSNotFound || [urlString rangeOfString:@"?n="].location != NSNotFound);
     LTLog(@"START_DOWNLOAD videoId=%@ host=%@ hasN=%d fullurl=%@", self.streamVideoId, [request.URL host], hasN, urlString);
     self.streamConnection = [[NSURLConnection alloc] initWithRequest:request delegate:self startImmediately:YES];
+    [self resetStreamWatchdog];
 }
 
 #pragma mark - NSURLConnectionDataDelegate
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response {
+    if (connection != self.streamConnection) return;
     NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
     LTLog(@"DL_RESPONSE status=%d expected=%lld", (int)[http statusCode], [response expectedContentLength]);
     self.streamHTTPStatus = [http statusCode];
     [self.streamData setLength:0];
+    [self resetStreamWatchdog];
+    if ([http statusCode] >= 400) {
+        // An expired stream URL answers 403/404 immediately; retry with a fresh
+        // URL instead of waiting for a body that will never arrive.
+        LTLog(@"DL_HTTP_ERROR status=%d — recovering", (int)[http statusCode]);
+        self.streamConnection = nil;
+        [connection cancel];
+        [self stopStreamWatchdog];
+        self.isLoading = NO;
+        [self recoverFromPlaybackFailure:[NSError errorWithDomain:NSURLErrorDomain
+                                                             code:[http statusCode]
+                                                         userInfo:nil]
+                                 videoId:self.streamVideoId];
+    }
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
+    if (connection != self.streamConnection) return;
+    [self resetStreamWatchdog];
     [self.streamData appendData:data];
     if ((self.streamData.length / 262144) != ((self.streamData.length - data.length) / 262144)) {
         LTLog(@"DL_PROGRESS bytes=%d", (int)self.streamData.length);
@@ -575,16 +705,19 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error {
+    if (connection != self.streamConnection) return; // cancelled/replaced: already handled
     LTLog(@"DL_ERROR %@", error);
     self.streamConnection = nil;
+    [self stopStreamWatchdog];
     self.isLoading = NO;
-    if (![self.streamVideoId isEqualToString:self.pendingVideoId]) return;
-    [self showError:error];
+    [self recoverFromPlaybackFailure:error videoId:self.streamVideoId];
 }
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection {
+    if (connection != self.streamConnection) return;
     LTLog(@"DL_FINISH bytes=%d status=%d", (int)self.streamData.length, (int)self.streamHTTPStatus);
     self.streamConnection = nil;
+    [self stopStreamWatchdog];
     if (![self.streamVideoId isEqualToString:self.pendingVideoId]) {
         LTLog(@"DL_STALE ignoring");
         return;
@@ -592,11 +725,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     if (self.streamHTTPStatus >= 400 || !self.streamData.length) {
         self.isLoading = NO;
         NSString *reason = self.streamHTTPStatus
-            ? [NSString stringWithFormat:@"Stream download failed (HTTP %d).\nThis usually clears after a few minutes.", (int)self.streamHTTPStatus]
-            : @"Stream download failed.\nThis usually clears after a few minutes.";
-        [self showError:[NSError errorWithDomain:NSURLErrorDomain code:self.streamHTTPStatus
-                                        userInfo:@{NSLocalizedDescriptionKey: reason}]];
-        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerStateDidChangeNotification object:self];
+            ? [NSString stringWithFormat:@"Stream download failed (HTTP %d).", (int)self.streamHTTPStatus]
+            : @"Stream download failed.";
+        [self recoverFromPlaybackFailure:[NSError errorWithDomain:NSURLErrorDomain code:self.streamHTTPStatus
+                                                        userInfo:@{NSLocalizedDescriptionKey: reason}]
+                                 videoId:self.streamVideoId];
         return;
     }
     NSString *path = [LTTempDirectory() stringByAppendingPathComponent:(self.pendingMuxed ? @"lt_track.mp4" : @"lt_track.m4a")];
@@ -683,6 +816,27 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         [strongSelf loadCurrentTrack];
     }];
     return YES;
+}
+
+// Lock screen / Control Center "previous": always go back to the last track,
+// rather than restarting the current one the way the in-app button does when
+// playback is past the three second mark.
+- (void)rewindToPreviousTrack {
+    [self commitStatsDelta];
+    if (self.currentIndex > 0) {
+        self.currentIndex -= 1;
+        [self postQueueChanged];
+        [self loadCurrentTrack];
+        return;
+    }
+    if (self.repeatMode == LTRepeatModeAll && self.queue.count) {
+        self.currentIndex = (NSInteger)self.queue.count - 1;
+        [self postQueueChanged];
+        [self loadCurrentTrack];
+        return;
+    }
+    [self playerSeekToTime:0];
+    [self updateNowPlayingInfo];
 }
 
 - (void)previousTrack {
@@ -775,14 +929,15 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     LTLog(@"FINISH success=%d", flag);
     if (flag) {
         [self nextTrack];
-    } else {
-        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerStateDidChangeNotification object:self];
+        return;
     }
+    // A truncated download or a decode that died used to just stop playback.
+    [self recoverFromPlaybackFailure:nil videoId:[self currentTrack].videoId];
 }
 
 - (void)audioPlayerDecodeErrorDidOccur:(AVAudioPlayer *)player error:(NSError *)error {
     LTLog(@"AUDIOPLAYER decode error: %@", error);
-    [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerStateDidChangeNotification object:self];
+    [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
 }
 
 #pragma mark - Errors

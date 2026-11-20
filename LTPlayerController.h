@@ -39,6 +39,9 @@ typedef NS_ENUM(NSInteger, LTRepeatMode) {
 - (LTTrack *)peekTrackOffset:(NSInteger)offset;
 - (void)nextTrack;
 - (void)previousTrack;
+// Lock screen / Control Center "previous": goes to the last track (or the end
+// of the queue when repeating) instead of restarting the current one.
+- (void)rewindToPreviousTrack;
 - (void)togglePlayPause;
 - (void)playMovie;
 - (void)pausePlayback;

@@ -303,8 +303,10 @@ static void LTUncaughtExceptionHandler(NSException *e) {
     return MPRemoteCommandHandlerStatusSuccess;
 }
 
+// Lock screen "rewind": back to the previous track from the first tap, even
+// mid-song (see -rewindToPreviousTrack).
 - (MPRemoteCommandHandlerStatus)remotePreviousCommand:(MPRemoteCommandEvent *)event {
-    [[LTPlayerController sharedController] previousTrack];
+    [[LTPlayerController sharedController] rewindToPreviousTrack];
     return MPRemoteCommandHandlerStatusSuccess;
 }
 
@@ -346,7 +348,7 @@ static void LTUncaughtExceptionHandler(NSException *e) {
             [controller nextTrack];
             break;
         case UIEventSubtypeRemoteControlPreviousTrack:
-            [controller previousTrack];
+            [controller rewindToPreviousTrack];
             break;
         case UIEventSubtypeRemoteControlBeginSeekingForward:
         case UIEventSubtypeRemoteControlEndSeekingForward:

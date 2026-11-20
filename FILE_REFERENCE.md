@@ -29,7 +29,9 @@ the iPod-mode / one-handed-mode root). The implementation installs an uncaught-e
 that writes crash reports to `lt_crash.txt` in the temp directory, configures the `AVAudioSession`
 for background playback, registers `MPRemoteCommandCenter` handlers (play/pause/next/previous/skip/
 position) so lock-screen and headphone controls work, and handles `remoteControlReceivedWithEvent:`
-for the old-style remote events used on legacy iOS. It also forwards delegate callbacks for
+for the old-style remote events used on legacy iOS. The remote "previous" handler calls
+`rewindToPreviousTrack` rather than `previousTrack`, so the lock screen always returns to the last
+track instead of restarting the current one. It also forwards delegate callbacks for
 backgrounding/foregrounding to the player controller.
 
 ### `LTModel.h` / `LTModel.m`
@@ -273,6 +275,18 @@ interruptions/backgrounding with resume, tracks listened time for stats (`statsT
 `commitStatsDelta` with a periodic timer), posts `LTPlayerTrackDidChange`/`StateDidChange`/
 `QueueDidChange`/`DidFinishQueue` notifications, and stores volume in NSUserDefaults.
 
+Playback is continuous by design: `recoverFromPlaybackFailure:videoId:` retries a track once with a
+freshly fetched stream URL (expired URLs and dropped connections answer 403/404 or fail outright),
+then skips to the next track, and only stops with an explanatory alert after
+`LTPlaybackFailureStreakLimit` failures in a row. Every failure path feeds it — stream URL fetch,
+HTTP ≥ 400 detected in `didReceiveResponse:`, connection errors, an empty download, `AVAudioPlayer`
+init/decode failures, `AVPlayerItemFailedToPlayToEndTime`, and a 30-second no-data stall caught by
+the `streamWatchdog` timer — and a successful start in `playMovie` resets the streak. Retries set
+`suppressTrackStats` so a retried track is not counted as a second play. For the lock screen,
+`rewindToPreviousTrack` always goes back to the previous track (or the end of the queue when
+repeating), `updateNowPlayingInfo` is re-published on track change and from `statsTick:` so elapsed
+time and the progress bar stay accurate, and the artwork refreshes when it loads.
+
 ### `LTPlayerViewController.h` / `LTPlayerViewController.m`
 The Now Playing tab — the largest UI file (~2000 lines). It builds the full-screen player: large
 artwork with a blurred dominant-color background (`artworkBackgroundEnabled`,
@@ -460,15 +474,19 @@ About contains version info with a hidden debug egg (`handleVersionTap` →
 theme on trait changes.
 
 ### `LTSignInViewController.h` / `LTSignInViewController.m`
-Google account sign-in screen, paste-only since the in-app `UIWebView` login was removed (Google's
-login page crashes the legacy WebKit engine on old armv7 devices mid-render, an uncatchable native
-crash). Shows instructions for copying the SAPISID cookie from a desktop browser (DevTools →
-Application → Cookies) and a "Paste SAPISID cookie" button (`pasteTapped:` → `alertView:` handling)
-that builds credentials from a bare token or a full cookie header. `tryAdoptCookies` harvests any
-Google cookies already in the shared cookie store into `LTAuth`; `finishSignIn` verifies the account
-via `fetchAccountNameWithCompletion:` and closes. `checkTapped:` manually retries cookie adoption.
-The bar leaves its left slot to the system back button (the screen is pushed from Settings) and
-only falls back to a `Close` item when it is a navigation root.
+Google account sign-in screen with two methods. **Google web sign-in** (`openWebSignInTapped:`)
+loads `accounts.google.com/ServiceLogin` with the `music.youtube.com` continuation URL inside a
+`UIWebView`, spoofing an Android 2.3 browser so Google serves its lightweight login page; because
+legacy `UIWebView` shares cookies with `NSHTTPCookieStorage`, `webViewDidFinishLoad:` can adopt the
+SAPISID cookie (`tryAdoptCookies`) as soon as a `google.com`/`youtube.com` page finishes loading.
+That route is only offered when `+webSignInAvailable` is YES (64-bit devices, where WebKit survives
+the page; on 32-bit armv7 it crashes natively mid-render). **Cookie sign-in** — the legacy method and
+the fallback everywhere — is the `Paste` bar button / "Use a cookie instead" button
+(`pasteTapped:` → `alertView:` handling), which builds credentials from a bare SAPISID token or a
+full Cookie header. `finishSignIn` verifies the account via `fetchAccountNameWithCompletion:` and
+closes (guarded by `finished` so repeated web-view loads cannot pop twice). `checkTapped:` manually
+retries cookie adoption. The bar leaves its left slot to the system back button (the screen is
+pushed from Settings) and only falls back to a `Close` item when it is a navigation root.
 
 ### `LTTransitionSettings.h` / `LTTransitionSettings.m`
 Reads/writes the transition speed multiplier stored in NSUserDefaults (key `LTTransitionSpeed`; 1.0
