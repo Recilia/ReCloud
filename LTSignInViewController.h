@@ -1,12 +1,9 @@
 #import <UIKit/UIKit.h>
 
+// Google's own sign-in page, hosted in an in-app browser. Offered on every
+// version of the app: WKWebView wherever its cookies can be read back
+// (iOS 11+), UIWebView everywhere else (which shares NSHTTPCookieStorage with
+// the app, so the cookies need no copying).
 @interface LTSignInViewController : UIViewController
-
-// Sign-in offers a classic Google web login and a cookie paste fallback.
-// The web login is 64-bit only (Google's page crashes the legacy WebKit engine
-// on old armv7 devices); cookie paste works everywhere and jumps straight to
-// the paste field when pasteOnly is YES.
-+ (BOOL)webSignInAvailable;
-- (id)initWithPasteOnly:(BOOL)pasteOnly;
 
 @end

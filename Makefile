@@ -20,6 +20,8 @@ ReinMusic_FILES = main.m \
 	LTAuth.m \
 	LTYouTubeClient.m \
 	LTSignInViewController.m \
+	LTCookieSignInViewController.m \
+	LTCookieTutorialViewController.m \
 	LTTabBarController.m \
 	LTSplitContainerViewController.m \
 	LTHomeViewController.m \

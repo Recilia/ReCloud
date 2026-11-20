@@ -166,8 +166,9 @@ varargs `LTPath` helper safely walks nested dict/array JSON.
 ### `LTAuth.h` / `LTAuth.m`
 Singleton holding Google account credentials for authenticated InnerTube calls, using the same
 cookie-based SAPISIDHASH scheme the YouTube Music web client uses:
-`Authorization: SAPISIDHASH <unixtime>_<sha1("<time> <origin> <SAPISID>")>`. The SAPISID cookie is
-pasted manually from a desktop browser signed into YouTube Music (the in-app web login was removed). The API exposes `signedIn`, `accountName`, `sapisid`
+`Authorization: SAPISIDHASH <unixtime>_<sha1("<time> <origin> <SAPISID>")>`. The SAPISID cookie comes from the
+in-app Google page or is pasted from a desktop browser signed into YouTube Music (see
+`LTSignInViewController` and `LTCookieSignInViewController`). The API exposes `signedIn`, `accountName`, `sapisid`
 (SAPISID, then `__Secure-3PAPISID`, then `__Secure-1PAPISID`), `cookieHeader`, and methods
 `setCredentialsWithCookieHeader:accountName:`, `adoptCookiesFromSharedStorage`,
 `authorizationHeaderForOrigin:` and `signOut`. Credentials persist in NSUserDefaults and changes are
@@ -467,38 +468,52 @@ and an iPod mode switch. Data management: Offline Downloads (opens `LTDownloadQu
 Sync with Another Phone (`LTP2PSync`), Refresh Metadata & Artwork (background job with progress
 alert via `startMetadataRefresh`), Create Rein Mini Instance (`exportToWebTapped` →
 `LTPlaylistSelectViewController` + `LTWebExporter`), and Clear Offline Downloads (with confirmation
-alerts through `alertView:clickedButtonAtIndex:`). Account rows show sign-in state
-(`authDidChange:`), pushing `LTSignInViewController` or confirming sign-out (`confirmSignOut`).
+alerts through `alertView:clickedButtonAtIndex:`). Account now has three rows — Google Sign-In (pushes
+`LTSignInViewController`), Cookies Sign-In (pushes `LTCookieSignInViewController`), and Log Out
+(confirming through `confirmSignOut`, dimmed while signed out) — with the signed-in account name in
+the section footer (`titleForFooterInSection:`); `authDidChange:` reloads the table.
 About contains version info with a hidden debug egg (`handleVersionTap` →
 `LTDebugMenuViewController`) and label helpers (`speedLabel`, `tileSizeLabel`). Applies its own
 theme on trait changes.
 
 ### `LTSignInViewController.h` / `LTSignInViewController.m`
-Google account sign-in screen with two methods. **Google web sign-in** (`openWebSignInTapped:`)
+Google's own sign-in page in an in-app browser, pushed from Settings → Account → Google Sign-In. It
 loads `accounts.google.com/ServiceLogin` with the `music.youtube.com` continuation URL, spoofing an
 Android 2.3 browser so Google serves its lightweight login page. Which web view hosts it depends on
 the OS, because cookies have to be read back out afterwards and the two engines keep them
 differently: **iOS 11+ uses `WKWebView`** (`openWKWebViewInFrame:`, chosen by
-`wkWebSignInAvailable`), whose cookies live in `WKWebsiteDataStore` and are polled every 1.5s from
+`canReadCookiesFromWKWebView`), whose cookies live in `WKWebsiteDataStore` and are polled every 1.5s from
 `WKHTTPCookieStore` (`getAllCookies:`, reached through the local `LTWKHTTPCookieStoreLike` protocol
 so the iOS 9.3 armv7 SDK still compiles). The web view itself is typed as the local
 `LTWKWebViewLike` protocol (`loadRequest:`, `stopLoading`, `isLoading`, `setCustomUserAgent:`) rather
 than poked with string-key KVC, so a wrong signature fails the build; the poll timer's target is a
 `LTWeakTimerProxy` so it cannot retain the controller, and it is invalidated in `dealloc` too.
 `adoptWKCookies:` keeps the `google`/`youtube` cookies and
-only replaces the stored credentials when SAPISID is among them. **iOS 8-10 keep `UIWebView`**
+only replaces the stored credentials when SAPISID is among them. **Everything else keeps `UIWebView`** (iOS 6-10, 32-bit included)
 (`openUIWebViewInFrame:`), which shares cookies with `NSHTTPCookieStorage`, so `webViewDidFinishLoad:`
-can adopt them via `tryAdoptCookies`. Both routes are offered only when `+webSignInAvailable` is YES
-(64-bit devices, where WebKit survives the page; on 32-bit armv7 it crashes natively mid-render).
+can adopt them via `tryAdoptCookies`. The screen is offered on every version of the app.
 WebKit is never linked: the armv7 SDK has it only as a private framework, so `LTEnsureWebKitLoaded`
 dlopens it on demand on the iOS 11+ path and iOS 6-10 launches never touch it. `viewWillDisappear:`
-and `finishSignIn` stop the cookie poll timer. **Cookie sign-in** — the legacy method and
-the fallback everywhere — is the `Paste` bar button / "Use a cookie instead" button
-(`pasteTapped:` → `alertView:` handling), which builds credentials from a bare SAPISID token or a
-full Cookie header. `finishSignIn` verifies the account via `fetchAccountNameWithCompletion:` and
+and `finishSignIn` stop the cookie poll timer. The cookie route has its own screen,
+`LTCookieSignInViewController`. `finishSignIn` verifies the account via `fetchAccountNameWithCompletion:` and
 closes (guarded by `finished` so repeated web-view loads cannot pop twice). `checkTapped:` manually
-retries cookie adoption. The bar leaves its left slot to the system back button (the screen is
-pushed from Settings) and only falls back to a `Close` item when it is a navigation root.
+retries cookie adoption. The bar carries `Cancel` on the left (`cancelTapped:`) and `Check` on the right.
+
+### `LTCookieSignInViewController.h` / `LTCookieSignInViewController.m`
+Cookie sign-in GUI (Settings → Account → Cookies Sign-In). A `UITextView` accepts a bare SAPISID
+value or a full Cookie header, with a placeholder overlay (`textViewDidChange:`) and keyboard insets
+on a `UIScrollView` (`keyboardWillShow:` / `keyboardWillHide:`). `signInTapped:` rejects empty input,
+stores the value through `setCredentialsWithCookieHeader:accountName:` and then proves it works with
+`fetchAccountNameWithCompletion:`: a rejected cookie shows an alert and stays on the screen, a good
+one is re-stored with the account name and the screen pops back to Settings. `guideTapped:` pushes
+`LTCookieTutorialViewController`.
+
+### `LTCookieTutorialViewController.h` / `LTCookieTutorialViewController.m`
+The guide behind "How do I get my cookies?": a read-only scrolling `UITextView` (`guideText`) that
+walks through opening music.youtube.com on a desktop, finding the cookie table in the Chrome / Edge /
+Firefox / Safari developer tools, copying the SAPISID (or `__Secure-3PAPISID` / `__Secure-1PAPISID`)
+value and pasting it into Cookies Sign-In, plus notes on whole-cookie-line pastes and keeping the
+cookie valid.
 
 ### `LTTransitionSettings.h` / `LTTransitionSettings.m`
 Reads/writes the transition speed multiplier stored in NSUserDefaults (key `LTTransitionSpeed`; 1.0

@@ -5,7 +5,7 @@
 #import "LTTheme.h"
 #include <dlfcn.h>
 
-// How the Google web sign-in is hosted, chosen by OS version:
+// Google's sign-in page in an in-app browser, offered on every device.
 //
 //   WKWebView (iOS 11+) — UIWebView can render Google's login page blank on
 //   modern iOS, so newer systems use WKWebView. Its cookies live in
@@ -15,16 +15,12 @@
 //   a private framework, so it is dlopen'd on demand, which also keeps iOS 6-10
 //   launches untouched by a framework they never use.
 //
-//   UIWebView (iOS 8-10, 64-bit) — no WKHTTPCookieStore exists to read the
-//   cookies out of a WKWebView, so those systems keep UIWebView, which shares
-//   NSHTTPCookieStorage with the app and needs no cookie copying.
+//   UIWebView (everything else) — iOS 6-10, 32-bit included. Those systems
+//   either have no WKWebView or no way to read one's cookies back, so the page
+//   is hosted in UIWebView, which shares NSHTTPCookieStorage with the app.
 //
-//   32-bit armv7 — Google's page crashes the legacy WebKit engine natively
-//   mid-render (uncatchable), so no web sign-in is offered at all.
-//
-// Cookie sign-in — paste the SAPISID value (or a full Cookie header) from a
-// desktop browser signed into YouTube Music. Needs no WebKit, works on every
-// device, and stays available as a button and a bar item everywhere.
+// The cookie paste route lives in LTCookieSignInViewController and stays
+// available next to this screen in Settings → Account.
 
 static NSString *const LTSignInWebUserAgent =
     @"Mozilla/5.0 (Linux; U; Android 2.3.7; en-us) AppleWebKit/533.1 "
@@ -107,14 +103,10 @@ static id LTWKHTTPCookieStore(void) {
     return [(id<LTWKDataStoreLike>)dataStore httpCookieStore];
 }
 
-@interface LTSignInViewController () <UIWebViewDelegate, UIAlertViewDelegate, UITextFieldDelegate, LTCookiePollReceiver>
-@property (nonatomic, assign) BOOL pasteOnly;
+@interface LTSignInViewController () <UIWebViewDelegate, LTCookiePollReceiver>
 @property (nonatomic, strong) UILabel *hintLabel;
-@property (nonatomic, strong) UIButton *webButton;
-@property (nonatomic, strong) UIButton *pasteButton;
 // Exactly one of these is used, depending on the OS version. The WK one is
-// untyped on purpose: no WebKit class is referenced by name, only by runtime
-// lookup, so the weak link works on devices without WebKit.
+// reached by runtime lookup only, never by naming a WebKit class.
 @property (nonatomic, strong) UIWebView *webView;
 @property (nonatomic, strong) id<LTWKWebViewLike> wkWebView;
 // WKWebView cannot hand its cookies over on navigation callbacks (a weak-linked
@@ -122,7 +114,6 @@ static id LTWKHTTPCookieStore(void) {
 // store is polled instead.
 @property (nonatomic, strong) NSTimer *cookiePollTimer;
 @property (nonatomic, strong) UIActivityIndicatorView *spinner;
-@property (nonatomic, strong) UIAlertView *pasteAlert;
 // YES once the sign-in finished, so the web view's repeated load callbacks
 // cannot pop the screen twice.
 @property (nonatomic, assign) BOOL finished;
@@ -130,137 +121,42 @@ static id LTWKHTTPCookieStore(void) {
 
 @implementation LTSignInViewController
 
-// 64-bit only: Google's page crashes legacy WebKit on armv7. A class method so
-// the rest of the screen can ask which routes exist.
-+ (BOOL)webSignInAvailable {
+// YES when a WKWebView's cookies can be read back out, i.e. iOS 11+ on a
+// 64-bit device. Everything else goes through UIWebView.
+- (BOOL)canReadCookiesFromWKWebView {
     if (sizeof(void *) != 8) return NO;
-    return NSClassFromString(@"WKWebView") != nil || NSClassFromString(@"UIWebView") != nil;
-}
-
-// YES when the login cookies can actually be read back out of WKWebView, i.e.
-// iOS 11+ on a 64-bit device.
-- (BOOL)wkWebSignInAvailable {
-    if (![[self class] webSignInAvailable]) return NO;
     if ([[UIDevice currentDevice].systemVersion doubleValue] < 11.0) return NO;
     LTEnsureWebKitLoaded();
     return NSClassFromString(@"WKWebView") != nil && LTWKHTTPCookieStore() != nil;
 }
 
-- (id)initWithPasteOnly:(BOOL)pasteOnly {
-    self = [super init];
-    if (self) _pasteOnly = pasteOnly;
-    return self;
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Sign in";
+    self.title = @"Google Sign-In";
     self.view.backgroundColor = [LTTheme background];
 
-    UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"Check"
-                                                                style:UIBarButtonItemStyleDone
-                                                               target:self
-                                                               action:@selector(checkTapped:)];
-    // Paste stays reachable in every mode, including while the Google page is
-    // open, since that is the only route on older devices.
-    UIBarButtonItem *pasteItem = [[UIBarButtonItem alloc] initWithTitle:@"Paste"
-                                                                 style:UIBarButtonItemStyleBordered
-                                                                target:self
-                                                                action:@selector(pasteTapped:)];
-    self.navigationItem.rightBarButtonItems = @[doneItem, pasteItem];
-
-    // Leave the bar's left slot to the system back button: the screen is
-    // pushed from Settings. A navigation root has nothing to pop to, so offer
-    // a Close button there.
-    if (!self.navigationController || self.navigationController.viewControllers.count <= 1) {
-        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Close"
-                                                                                 style:UIBarButtonItemStyleBordered
-                                                                                target:self
-                                                                                action:@selector(closeTapped:)];
-    }
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Cancel"
+                                                                            style:UIBarButtonItemStyleBordered
+                                                                           target:self
+                                                                           action:@selector(cancelTapped:)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Check"
+                                                                             style:UIBarButtonItemStyleDone
+                                                                            target:self
+                                                                            action:@selector(checkTapped:)];
 
     CGFloat width = self.view.bounds.size.width;
-    BOOL webAvailable = [[self class] webSignInAvailable];
-
-    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, width - 24, webAvailable ? 62 : 84)];
+    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, width - 24, 40)];
     self.hintLabel.font = [UIFont systemFontOfSize:12];
     self.hintLabel.textColor = [LTTheme secondaryText];
-    self.hintLabel.numberOfLines = 5;
+    self.hintLabel.numberOfLines = 3;
     self.hintLabel.textAlignment = NSTextAlignmentCenter;
     self.hintLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
-    self.hintLabel.text = webAvailable
-        ? @"Sign in with your Google account below, or paste the SAPISID\ncookie from a desktop browser signed into YouTube Music.\n(DevTools → Application → Cookies) A full Cookie header works too."
-        : @"Paste the SAPISID cookie value from a desktop browser signed\ninto YouTube Music. (DevTools → Application → Cookies)\nA full Cookie header works too.\n\nIn-app Google sign-in is not available on this device.";
+    self.hintLabel.text = @"Sign in with your Google account below. This screen closes by itself once Google is done.";
     [self.view addSubview:self.hintLabel];
 
-    if (self.pasteOnly) {
-        [self pasteTapped:nil];
-        return;
-    }
-
-    CGFloat buttonY = CGRectGetMaxY(self.hintLabel.frame) + 8;
-    if (webAvailable) {
-        self.webButton = [self actionButtonWithTitle:@"Sign in with Google" y:buttonY];
-        [self.webButton addTarget:self
-                           action:@selector(openWebSignInTapped:)
-                 forControlEvents:UIControlEventTouchUpInside];
-        [self.view addSubview:self.webButton];
-
-        self.pasteButton = [self actionButtonWithTitle:@"Use a cookie instead"
-                                                     y:buttonY + CGRectGetHeight(self.webButton.frame) + 10];
-    } else {
-        self.pasteButton = [self actionButtonWithTitle:@"Paste SAPISID cookie" y:buttonY];
-    }
-    [self.pasteButton addTarget:self
-                         action:@selector(pasteTapped:)
-               forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.pasteButton];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self stopCookiePolling];
-}
-
-- (void)dealloc {
-    // The proxy above stops the timer once this controller is gone; invalidating
-    // here as well covers a teardown that races an in-flight poll.
-    [_cookiePollTimer invalidate];
-}
-
-- (UIButton *)actionButtonWithTitle:(NSString *)title y:(CGFloat)y {
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.frame = CGRectMake(16, y, self.view.bounds.size.width - 32, 44);
-    button.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
-    button.layer.cornerRadius = 8;
-    button.layer.borderWidth = 1;
-    button.layer.borderColor = [LTTheme separator].CGColor;
-    button.backgroundColor = [LTTheme fill];
-    [button setTitle:title forState:UIControlStateNormal];
-    [button setTitleColor:[LTTheme text] forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:15];
-    return button;
-}
-
-- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation {
-    return YES;
-}
-
-#pragma mark - Google web sign-in
-
-- (void)openWebSignInTapped:(id)sender {
-    [self.webButton removeFromSuperview];
-    self.webButton = nil;
-    [self.pasteButton removeFromSuperview];
-    self.pasteButton = nil;
-
     CGFloat top = CGRectGetMaxY(self.hintLabel.frame) + 4;
-    CGRect frame = CGRectMake(0, top, self.view.bounds.size.width,
-                              self.view.bounds.size.height - top);
-    self.hintLabel.text = @"Loading Google's sign-in page…";
-
-    BOOL useWKWebView = [self wkWebSignInAvailable];
-    if (useWKWebView) {
+    CGRect frame = CGRectMake(0, top, width, self.view.bounds.size.height - top);
+    if ([self canReadCookiesFromWKWebView]) {
         [self openWKWebViewInFrame:frame];
     } else {
         [self openUIWebViewInFrame:frame];
@@ -274,7 +170,7 @@ static id LTWKHTTPCookieStore(void) {
     [self.view addSubview:self.spinner];
     [self.spinner startAnimating];
 
-    if (useWKWebView) {
+    if (self.wkWebView) {
         [self.wkWebView loadRequest:[self loginRequest]];
         [self startCookiePolling];
     } else {
@@ -282,13 +178,30 @@ static id LTWKHTTPCookieStore(void) {
     }
 }
 
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [self stopCookiePolling];
+}
+
+- (void)dealloc {
+    // The proxy above stops the timer once this controller is gone; invalidating
+    // here as well covers a teardown that races an in-flight poll.
+    [_cookiePollTimer invalidate];
+}
+
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation {
+    return YES;
+}
+
+#pragma mark - Web view
+
 - (NSURLRequest *)loginRequest {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:LTSignInWebURL]
                                                           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                       timeoutInterval:60.0];
     // Pretend to be a very old Android browser so Google serves its
-    // lightweight login page instead of the modern one that crashes the legacy
-    // WebKit engine mid-render.
+    // lightweight login page instead of the modern one that the legacy WebKit
+    // engine struggles with.
     [request setValue:LTSignInWebUserAgent forHTTPHeaderField:@"User-Agent"];
     return request;
 }
@@ -345,7 +258,7 @@ static id LTWKHTTPCookieStore(void) {
     }
     if (!self.wkWebView.isLoading) {
         [self.spinner stopAnimating];
-        self.hintLabel.text = @"Signed in? Tap Check, or paste a cookie instead.";
+        self.hintLabel.text = @"Signed in? Tap Check.";
     }
     [self adoptCookiesFromWKWebView];
 }
@@ -405,7 +318,7 @@ static id LTWKHTTPCookieStore(void) {
 
 - (void)webViewDidFinishLoad:(UIWebView *)webView {
     [self.spinner stopAnimating];
-    self.hintLabel.text = @"Signed in? Tap Check, or paste a cookie instead.";
+    self.hintLabel.text = @"Signed in? Tap Check.";
     // Every page that loads is a chance that the login just completed: the
     // cookies are shared with NSHTTPCookieStorage, so look for SAPISID.
     NSString *host = webView.request.URL.host ?: @"";
@@ -418,7 +331,7 @@ static id LTWKHTTPCookieStore(void) {
     [self.spinner stopAnimating];
     if (error.code == NSURLErrorCancelled) return;
     LTLog(@"AUTH webview load failed: %@", error);
-    self.hintLabel.text = @"Google's sign-in page could not be loaded.\nUse Paste to enter the cookie instead.";
+    self.hintLabel.text = @"Google's sign-in page could not be loaded. Try again, or use Cookies Sign-In.";
 }
 
 #pragma mark - Capture
@@ -456,7 +369,7 @@ static id LTWKHTTPCookieStore(void) {
 
 #pragma mark - Buttons
 
-- (void)closeTapped:(id)sender {
+- (void)cancelTapped:(id)sender {
     [self stopCookiePolling];
     if (self.navigationController.viewControllers.count > 1) {
         [self.navigationController popViewControllerAnimated:YES];
@@ -466,42 +379,13 @@ static id LTWKHTTPCookieStore(void) {
 }
 
 - (void)checkTapped:(id)sender {
-    if (![self tryAdoptCookies]) {
-        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Not signed in yet"
-                                                        message:[[self class] webSignInAvailable]
-                                                              ? @"No Google account cookie found yet. Finish signing in on the page, or paste the SAPISID cookie from a desktop browser signed into YouTube Music."
-                                                              : @"No Google account cookie found. Paste the SAPISID cookie from a desktop browser signed into YouTube Music."
-                                                       delegate:nil
-                                              cancelButtonTitle:@"OK"
-                                              otherButtonTitles:nil];
-        [alert show];
-    }
-}
-
-- (void)pasteTapped:(id)sender {
-    if (!self.pasteAlert) {
-        self.pasteAlert = [[UIAlertView alloc] initWithTitle:@"Paste credentials"
-                                                     message:@"Paste the SAPISID value or the full Cookie header copied from a desktop browser signed into YouTube Music."
-                                                    delegate:self
-                                           cancelButtonTitle:@"Cancel"
-                                           otherButtonTitles:@"Save", nil];
-        self.pasteAlert.alertViewStyle = UIAlertViewStylePlainTextInput;
-        UITextField *field = [self.pasteAlert textFieldAtIndex:0];
-        field.secureTextEntry = YES;
-        field.delegate = self;
-        field.placeholder = @"SAPISID=... or bare token";
-    }
-    [self.pasteAlert show];
-}
-
-- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex {
-    if (alertView != self.pasteAlert || buttonIndex != 1) return;
-    UITextField *field = [alertView textFieldAtIndex:0];
-    NSString *text = [field.text stringByTrimmingCharactersInSet:
-                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (!text.length) return;
-    [[LTAuth sharedAuth] setCredentialsWithCookieHeader:text accountName:nil];
-    [self finishSignIn];
+    if ([self tryAdoptCookies]) return;
+    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Not signed in yet"
+                                                    message:@"No Google account cookie found yet. Finish signing in on the page, or use Cookies Sign-In to paste a SAPISID cookie."
+                                                   delegate:nil
+                                          cancelButtonTitle:@"OK"
+                                          otherButtonTitles:nil];
+    [alert show];
 }
 
 @end

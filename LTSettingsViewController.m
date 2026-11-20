@@ -18,6 +18,7 @@
 #import "LTYouTubeClient.h"
 #import "LTAuth.h"
 #import "LTSignInViewController.h"
+#import "LTCookieSignInViewController.h"
 #import "LTTheme.h"
 #import "LTLog.h"
 
@@ -530,10 +531,20 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
     }
 }
 
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section != LTSettingsSectionAccount) return nil;
+    if ([[LTAuth sharedAuth] signedIn]) {
+        NSString *name = [[LTAuth sharedAuth] accountName];
+        return name.length ? [NSString stringWithFormat:@"Signed in as %@", name]
+                           : @"Signed in to Google.";
+    }
+    return @"Sign in to personalize Home, your library and listening history.";
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case LTSettingsSectionUpdates: return 1;
-        case LTSettingsSectionAccount: return 1;
+        case LTSettingsSectionAccount: return 3;
         case LTSettingsSectionPlayback: return 2;
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
         case LTSettingsSectionData: return 9;
@@ -597,17 +608,25 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             break;
         }
         case LTSettingsSectionAccount: {
-            if ([[LTAuth sharedAuth] signedIn]) {
-                NSString *name = [[LTAuth sharedAuth] accountName];
-                cell.textLabel.text = name.length ? name : @"Signed in";
-                cell.detailTextLabel.text = @"Google";
+            // Two ways in, then the way out: the Google page in an in-app
+            // browser, the SAPISID paste route, and Log Out below them.
+            BOOL signedIn = [[LTAuth sharedAuth] signedIn];
+            if (indexPath.row == 0) {
+                cell.textLabel.text = @"Google Sign-In";
+                cell.detailTextLabel.text = @"Web page";
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            } else if (indexPath.row == 1) {
+                cell.textLabel.text = @"Cookies Sign-In";
+                cell.detailTextLabel.text = @"Paste SAPISID";
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             } else {
-                cell.textLabel.text = @"Sign in to Google";
-                cell.detailTextLabel.text = @"For recommendations";
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+                cell.textLabel.text = @"Log Out";
+                cell.textLabel.textColor = signedIn ? [LTTheme accent] : [LTTheme secondaryText];
+                cell.detailTextLabel.text = @"";
+                cell.selectionStyle = signedIn ? UITableViewCellSelectionStyleBlue
+                                               : UITableViewCellSelectionStyleNone;
             }
             cell.detailTextLabel.textColor = [LTTheme secondaryText];
             break;
@@ -901,11 +920,14 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         return;
     }
     if (indexPath.section == LTSettingsSectionAccount) {
-        if ([[LTAuth sharedAuth] signedIn]) {
-            [self confirmSignOut];
-        } else {
-            LTSignInViewController *vc = [[LTSignInViewController alloc] initWithPasteOnly:NO];
+        if (indexPath.row == 0) {
+            LTSignInViewController *vc = [[LTSignInViewController alloc] init];
             [self.navigationController pushViewController:vc animated:YES];
+        } else if (indexPath.row == 1) {
+            LTCookieSignInViewController *vc = [[LTCookieSignInViewController alloc] init];
+            [self.navigationController pushViewController:vc animated:YES];
+        } else if ([[LTAuth sharedAuth] signedIn]) {
+            [self confirmSignOut];
         }
         return;
     }
