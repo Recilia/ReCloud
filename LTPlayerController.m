@@ -45,6 +45,15 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 // Set once the watchdog has acted on the loaded item, so it cannot fire twice
 // for the same track.
 @property (nonatomic, assign) BOOL endRecoveryPending;
+// Playback start is issued and then *verified* (see -attemptPlaybackStart).
+// Identifying and loading the next track is not the same as hearing it, so the
+// one -play call every transition used to make is now a bounded attempt that
+// checks what the player actually did.
+@property (nonatomic, assign) NSInteger startAttempts;
+@property (nonatomic, strong) NSTimer *startVerifyTimer;
+// The AVPlayerItem whose -status is being watched (muxed playback), kept so the
+// observer is removed exactly once and late callbacks can be ignored.
+@property (nonatomic, strong) AVPlayerItem *observedItem;
 @end
 
 @implementation LTPlayerController
@@ -178,6 +187,9 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 // and endRecoveryPending keeps it to one attempt per track.
 - (void)checkForEndedPlayback {
     if (![self hasActivePlayer] || self.userPaused || self.interrupted || self.isLoading) return;
+    // A start that is being verified is in charge of this item: it is sitting at
+    // position 0, so it cannot be a completion whose callback went missing.
+    if (self.startVerifyTimer) return;
     if ([self playerIsPlaying]) {
         self.endRecoveryPending = NO;
         return;
@@ -231,11 +243,23 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:AVPlayerItemFailedToPlayToEndTimeNotification
                                                   object:nil];
+    if (self.observedItem) {
+        // Removed by hand because a failed item can already have dropped its
+        // observers; -removeObserver:forKeyPath: throws in that case.
+        @try {
+            [self.observedItem removeObserver:self forKeyPath:@"status"];
+        } @catch (NSException *exception) {
+            LTLog(@"ITEM observer removal failed: %@", exception);
+        }
+        self.observedItem = nil;
+    }
     [self.moviePlayer pause];
     self.moviePlayer = nil;
 }
 
-- (void)configureAudioSession {
+// Kept separate from -configureAudioSession so the start attempts can call it
+// without logging "session active" on every retry; failures are still reported.
+- (BOOL)activateAudioSessionQuietly {
     AVAudioSession *session = [AVAudioSession sharedInstance];
     NSError *error = nil;
     BOOL ok = [session setCategory:AVAudioSessionCategoryPlayback error:&error];
@@ -243,7 +267,147 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     error = nil;
     ok = [session setActive:YES error:&error];
     if (!ok) LTLog(@"AUDIO setActive error: %@", error);
-    else LTLog(@"AUDIO session active");
+    return ok;
+}
+
+- (void)configureAudioSession {
+    if ([self activateAudioSessionQuietly]) LTLog(@"AUDIO session active");
+}
+
+#pragma mark - Verified playback start
+
+// Every track, from every screen, reaches audio through -playMovie. That method
+// used to issue -play once and trust it, which is how a transition could put
+// the next track on screen while the underlying player stayed at rate 0: an
+// AVAudioPlayer whose -play returned NO (inactive session) and an AVPlayer
+// whose item was not ready both look exactly like a paused player, and nothing
+// asked again. The start is now attempted, checked against the player's real
+// state, re-activated and retried a bounded number of times, and finally
+// reported as a failed load so the queue advances instead of hanging in silence.
+//
+// The interval is a check cadence, not a delay before playing: -play is issued
+// immediately on every attempt.
+static const NSInteger LTPlaybackStartAttemptLimit = 6;
+static const NSTimeInterval LTPlaybackStartVerifyInterval = 0.75;
+
+- (NSString *)playerStateDescription {
+    if (self.moviePlayer) {
+        AVPlayerItem *item = self.moviePlayer.currentItem;
+        CMTime position = item ? item.currentTime : kCMTimeZero;
+        CMTime duration = item ? item.duration : kCMTimeZero;
+        return [NSString stringWithFormat:@"avplayer rate=%.2f status=%d t=%.2f/%.2f",
+                self.moviePlayer.rate, item ? (int)item.status : -1,
+                CMTimeGetSeconds(position), CMTimeGetSeconds(duration)];
+    }
+    if (self.audioPlayer) {
+        return [NSString stringWithFormat:@"audioplayer playing=%d t=%.2f/%.2f",
+                (int)self.audioPlayer.isPlaying,
+                self.audioPlayer.currentTime, self.audioPlayer.duration];
+    }
+    return @"none";
+}
+
+// -playerIsPlaying reports intent (AVPlayer keeps a non-zero rate while it is
+// still preparing to play). This asks whether the source can actually produce
+// sound right now, which is what a successful start means.
+- (BOOL)activePlayerIsProducingAudio {
+    if (self.moviePlayer) {
+        AVPlayerItem *item = self.moviePlayer.currentItem;
+        return self.moviePlayer.rate != 0.0 && item != nil &&
+               item.status == AVPlayerItemStatusReadyToPlay;
+    }
+    return self.audioPlayer.isPlaying;
+}
+
+- (void)startPlaybackWithVerification {
+    self.startAttempts = 0;
+    [self attemptPlaybackStart];
+}
+
+- (void)attemptPlaybackStart {
+    [self.startVerifyTimer invalidate];
+    self.startVerifyTimer = nil;
+    if (![self hasActivePlayer]) {
+        LTLog(@"PLAY_ABORT nothing loaded");
+        return;
+    }
+    if (self.userPaused || self.interrupted) {
+        LTLog(@"PLAY_ABORT userPaused=%d interrupted=%d",
+              (int)self.userPaused, (int)self.interrupted);
+        return;
+    }
+    self.startAttempts += 1;
+    // An item that is already at its end cannot be started; rewind it so a
+    // retry after a finished item restarts it instead of failing forever.
+    if ([self activePlayerReachedEnd]) {
+        [self playerSeekToTime:0];
+    }
+    // Ahead of every attempt: a session that was deactivated behind our back
+    // (route change, an interruption that never reported its end, backgrounding)
+    // answers -play with NO and the track would stay silent.
+    BOOL sessionActive = [self activateAudioSessionQuietly];
+    [self startActivePlayer];
+    LTLog(@"PLAY_ATTEMPT %d session=%d %@ videoId=%@",
+          (int)self.startAttempts, (int)sessionActive,
+          [self playerStateDescription], [self currentTrack].videoId);
+    // Verify on the next turn of the run loop rather than trusting the call:
+    // AVAudioPlayer may not have flipped -isPlaying yet, and AVPlayer reports a
+    // rate it cannot honour until its item is ready.
+    self.startVerifyTimer = [NSTimer scheduledTimerWithTimeInterval:LTPlaybackStartVerifyInterval
+                                                             target:self
+                                                           selector:@selector(verifyPlaybackStart:)
+                                                           userInfo:nil
+                                                            repeats:NO];
+    [[NSRunLoop mainRunLoop] addTimer:self.startVerifyTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)verifyPlaybackStart:(NSTimer *)timer {
+    self.startVerifyTimer = nil;
+    // A pause, an interruption or a track change all cancel this attempt.
+    if (self.userPaused || self.interrupted || ![self hasActivePlayer]) return;
+    if ([self activePlayerIsProducingAudio]) {
+        self.consecutiveLoadFailures = 0;
+        self.lastRetriedVideoId = nil;
+        self.endRecoveryPending = NO;
+        self.isLoading = NO;
+        LTLog(@"PLAY_CONFIRMED attempt=%d %@ videoId=%@",
+              (int)self.startAttempts, [self playerStateDescription],
+              [self currentTrack].videoId);
+        // Now that sound is really coming out, publish the true rate/duration
+        // so the lock screen and the player stop showing a paused track.
+        [self updateNowPlayingInfo];
+        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerStateDidChangeNotification object:self];
+        return;
+    }
+    // A track can also play and finish inside the window (a very short item):
+    // that is a completion, not a start that failed.
+    if ([self activePlayerReachedEnd]) {
+        LTLog(@"PLAY_ENDED_DURING_VERIFY videoId=%@", [self currentTrack].videoId);
+        [self nextTrack];
+        return;
+    }
+    LTLog(@"PLAY_NOT_STARTED attempt=%d %@ videoId=%@",
+          (int)self.startAttempts, [self playerStateDescription],
+          [self currentTrack].videoId);
+    if (self.startAttempts >= LTPlaybackStartAttemptLimit) {
+        // A player that will not start is a failed load, not a paused track.
+        // Recovery retries the track once, then moves on, so a transition can
+        // never leave the app on a loaded track with silence behind it.
+        LTLog(@"PLAY_FAILED giving up videoId=%@", [self currentTrack].videoId);
+        self.isLoading = NO;
+        NSError *error = [NSError errorWithDomain:@"LTPlayerController"
+                                             code:1
+                                         userInfo:@{NSLocalizedDescriptionKey: @"The player did not start playback."}];
+        [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
+        return;
+    }
+    [self attemptPlaybackStart];
+}
+
+- (void)cancelStartVerification {
+    [self.startVerifyTimer invalidate];
+    self.startVerifyTimer = nil;
+    self.startAttempts = 0;
 }
 
 - (void)appWillEnterForeground:(NSNotification *)notification {
@@ -265,6 +429,7 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     LTLog(@"AUDIO interruption type=%d", [type intValue]);
     if ([type intValue] == AVAudioSessionInterruptionTypeBegan) {
         self.interrupted = YES;
+        [self cancelStartVerification];
         self.resumeAfterInterruption = [self playerIsPlaying];
         [self pauseActivePlayer];
     } else if ([type intValue] == AVAudioSessionInterruptionTypeEnded) {
@@ -278,12 +443,25 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 }
 
 - (void)playMovie {
+    self.userPaused = NO;
+    // Play with nothing loaded (every source failed, an emptied session) used to
+    // clear the flags, report a state change and leave silence behind. Load the
+    // track instead, so a Play press always ends in audio.
+    if (![self hasActivePlayer]) {
+        if ([self currentTrack]) {
+            LTLog(@"PLAY nothing loaded, reloading %@", [self currentTrack].videoId);
+            [self loadCurrentTrack];
+            return;
+        }
+        LTLog(@"PLAY ignored, nothing to play");
+        [self cancelStartVerification];
+        self.isLoading = NO;
+        [self updateNowPlayingInfo];
+        [[NSNotificationCenter defaultCenter] postNotificationName:LTPlayerStateDidChangeNotification object:self];
+        return;
+    }
     [self configureAudioSession];
     self.isLoading = NO;
-    self.userPaused = NO;
-    // A player that actually starts ends the failure streak.
-    self.consecutiveLoadFailures = 0;
-    self.lastRetriedVideoId = nil;
     // Pressing Play on an item that already finished used to do nothing at all
     // (an ended player cannot be resumed), which is how the dead state after a
     // queue ran out looked from the lock screen. Rewind so it always restarts.
@@ -291,7 +469,9 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         [self playerSeekToTime:0];
     }
     self.statsBaseTime = [self playerCurrentTime];
-    [self startActivePlayer];
+    // Issues -play and keeps checking until the player really is producing
+    // audio; the failure streak is only cleared once that is confirmed.
+    [self startPlaybackWithVerification];
     [self updateNowPlayingInfo];
     BOOL keepAwake = [[NSUserDefaults standardUserDefaults] boolForKey:@"LTKeepAwake"];
     [[UIApplication sharedApplication] setIdleTimerDisabled:keepAwake];
@@ -299,7 +479,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 }
 
 - (void)pausePlayback {
+    // A deliberate pause cancels any start that is still being verified.
+    [self cancelStartVerification];
     [self commitStatsDelta];
+    LTLog(@"PAUSE videoId=%@ %@", [self currentTrack].videoId, [self playerStateDescription]);
     // Every caller of this is a deliberate pause (the in-app button, the lock
     // screen and headset commands, an emptied queue), and the end-of-item
     // watchdog must not treat one as a missed completion and skip ahead. This
@@ -522,6 +705,8 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
 - (void)loadCurrentTrack {
     LTTrack *track = [self currentTrack];
     if (!track) return;
+    // Anything still being verified belongs to the track being replaced.
+    [self cancelStartVerification];
     // A new load invalidates everything still in flight: the stream fetch and
     // the download for the previous track must not be able to start playing
     // over this one, and the end-of-item watchdog starts fresh.
@@ -633,6 +818,11 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
                                                  name:AVPlayerItemFailedToPlayToEndTimeNotification
                                                object:item];
     self.moviePlayer = [[AVPlayer alloc] initWithPlayerItem:item];
+    // -play on an item whose status is still Unknown is what could leave a muxed
+    // track loaded and silent with no callback to rescue it. Start from the
+    // item's readiness instead of assuming it.
+    [item addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionNew context:NULL];
+    self.observedItem = item;
     if ([self.moviePlayer respondsToSelector:@selector(setVolume:)]) {
         self.moviePlayer.volume = self.volume; // iOS 7+ only
     }
@@ -646,7 +836,10 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
         LTLog(@"FINISH ignoring end from a stale item");
         return;
     }
-    LTLog(@"FINISH avplayer item end");
+    // An advance is already in flight for this item: keeps the 5s watchdog from
+    // advancing a second time in the window before the next track loads.
+    self.endRecoveryPending = YES;
+    LTLog(@"FINISH avplayer item end videoId=%@", [self currentTrack].videoId);
     [self nextTrack];
 }
 
@@ -658,6 +851,30 @@ NSString *const LTPlayerQueueDidChangeNotification = @"LTPlayerQueueDidChangeNot
     NSError *error = [[notification userInfo] objectForKey:AVPlayerItemFailedToPlayToEndTimeErrorKey];
     LTLog(@"FINISH avplayer item failed: %@", error);
     [self recoverFromPlaybackFailure:error videoId:[self currentTrack].videoId];
+}
+
+// Readiness of the muxed item that is currently loaded. A transition waits for
+// this instead of playing into an item that cannot start yet.
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context {
+    if (![keyPath isEqualToString:@"status"] || ![object isKindOfClass:[AVPlayerItem class]]) {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+        return;
+    }
+    AVPlayerItem *item = (AVPlayerItem *)object;
+    if (item != self.observedItem) return; // a track already replaced this one
+    LTLog(@"ITEM status=%d %@ videoId=%@", (int)item.status,
+          [self playerStateDescription], [self currentTrack].videoId);
+    if (item.status == AVPlayerItemStatusReadyToPlay) {
+        // Ready now: this is the moment a start attempt that was waiting on the
+        // source can take effect.
+        if (!self.userPaused && !self.interrupted && ![self activePlayerIsProducingAudio]) {
+            [self attemptPlaybackStart];
+        }
+    } else if (item.status == AVPlayerItemStatusFailed) {
+        LTLog(@"ITEM failed: %@", item.error);
+        [self recoverFromPlaybackFailure:item.error videoId:[self currentTrack].videoId];
+    }
 }
 
 #pragma mark - Failure recovery
@@ -833,6 +1050,11 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 
 - (void)nextTrack {
     [self commitStatsDelta];
+    // A start still being verified belongs to the track being left.
+    [self cancelStartVerification];
+    LTLog(@"NEXT index=%d count=%d repeat=%d from=%@",
+          (int)self.currentIndex, (int)self.queue.count, (int)self.repeatMode,
+          [self currentTrack].videoId ?: @"(none)");
     if (self.repeatMode == LTRepeatModeOne && self.currentIndex >= 0) {
         [self replayCurrentTrack];
         return;
@@ -1058,12 +1280,16 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
 }
 
 - (void)togglePlayPause {
-    if (![self hasActivePlayer]) return;
     if ([self playerIsPlaying]) {
         [self pausePlayback];
-    } else {
-        [self playMovie];
+        return;
     }
+    // Nothing loaded yet but a track is still arriving: there is no paused
+    // player to start, and loading it again would restart the download.
+    if (![self hasActivePlayer] && self.isLoading) return;
+    // With nothing loaded otherwise, -playMovie loads the current track instead
+    // of a Play press doing nothing at all.
+    [self playMovie];
 }
 
 - (void)seekToTime:(NSTimeInterval)time {
@@ -1080,8 +1306,10 @@ static const NSInteger LTPlaybackFailureStreakLimit = 3;
         LTLog(@"FINISH ignoring end from a replaced player");
         return;
     }
-    LTLog(@"FINISH success=%d", flag);
+    LTLog(@"FINISH success=%d videoId=%@", flag, [self currentTrack].videoId);
     if (flag) {
+        // Stops the watchdog advancing the same finished item a second time.
+        self.endRecoveryPending = YES;
         [self nextTrack];
         return;
     }

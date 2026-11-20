@@ -329,13 +329,27 @@ interruptions/backgrounding with resume, tracks listened time for stats (`statsT
 `commitStatsDelta` with a periodic timer), posts `LTPlayerTrackDidChange`/`StateDidChange`/
 `QueueDidChange`/`DidFinishQueue` notifications, and stores volume in NSUserDefaults.
 
+**Starting playback is verified, not assumed.** Every track — tapped on Home, in search, on an
+artist/album page, in a playlist, from the queue, or advanced to automatically — reaches audio
+through `playMovie`, which hands the start to `attemptPlaybackStart`: it re-activates the audio
+session, issues `-play`, and checks the player's real state on the next run-loop turn
+(`verifyPlaybackStart:`) instead of trusting the call. A start that did not take (an `AVAudioPlayer`
+whose `-play` returned NO on an inactive session, an `AVPlayer` whose item is not yet
+`AVPlayerItemStatusReadyToPlay`) is retried up to `LTPlaybackStartAttemptLimit` times; a start that
+never lands is handed to `recoverFromPlaybackFailure:videoId:` so the queue keeps moving instead of
+leaving a loaded track sitting silently. `activePlayerIsProducingAudio` is the stricter "sound is
+really coming out" test used for confirmation, and muxed playback starts from the item's readiness
+(`observeValueForKeyPath:` on `status`). A pause, an interruption, a track change and manual Next
+all cancel an attempt (`cancelStartVerification`). A transition is logged end to end: `FINISH`,
+`NEXT`, `LOAD`, `PLAY_ATTEMPT`, `PLAY_NOT_STARTED`, `PLAY_CONFIRMED`, `PLAY_FAILED`, `ITEM status`.
+
 Playback is continuous by design: `recoverFromPlaybackFailure:videoId:` retries a track once with a
 freshly fetched stream URL (expired URLs and dropped connections answer 403/404 or fail outright),
 then skips to the next track, and only stops with an explanatory alert after
 `LTPlaybackFailureStreakLimit` failures in a row. Every failure path feeds it — stream URL fetch,
 HTTP ≥ 400 detected in `didReceiveResponse:`, connection errors, an empty download, `AVAudioPlayer`
 init/decode failures, `AVPlayerItemFailedToPlayToEndTime`, and a 30-second no-data stall caught by
-the `streamWatchdog` timer — and a successful start in `playMovie` resets the streak. Retries set
+the `streamWatchdog` timer — and a confirmed start (`PLAY_CONFIRMED`) resets the streak. Retries set
 `suppressTrackStats` so a retried track is not counted as a second play. For the lock screen,
 `rewindToPreviousTrack` always goes back to the previous track (or the end of the queue when
 repeating), `updateNowPlayingInfo` is re-published on track change and from `statsTick:` so elapsed
