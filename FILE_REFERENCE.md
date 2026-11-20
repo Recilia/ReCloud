@@ -475,12 +475,24 @@ theme on trait changes.
 
 ### `LTSignInViewController.h` / `LTSignInViewController.m`
 Google account sign-in screen with two methods. **Google web sign-in** (`openWebSignInTapped:`)
-loads `accounts.google.com/ServiceLogin` with the `music.youtube.com` continuation URL inside a
-`UIWebView`, spoofing an Android 2.3 browser so Google serves its lightweight login page; because
-legacy `UIWebView` shares cookies with `NSHTTPCookieStorage`, `webViewDidFinishLoad:` can adopt the
-SAPISID cookie (`tryAdoptCookies`) as soon as a `google.com`/`youtube.com` page finishes loading.
-That route is only offered when `+webSignInAvailable` is YES (64-bit devices, where WebKit survives
-the page; on 32-bit armv7 it crashes natively mid-render). **Cookie sign-in** — the legacy method and
+loads `accounts.google.com/ServiceLogin` with the `music.youtube.com` continuation URL, spoofing an
+Android 2.3 browser so Google serves its lightweight login page. Which web view hosts it depends on
+the OS, because cookies have to be read back out afterwards and the two engines keep them
+differently: **iOS 11+ uses `WKWebView`** (`openWKWebViewInFrame:`, chosen by
+`wkWebSignInAvailable`), whose cookies live in `WKWebsiteDataStore` and are polled every 1.5s from
+`WKHTTPCookieStore` (`getAllCookies:`, reached through the local `LTWKHTTPCookieStoreLike` protocol
+so the iOS 9.3 armv7 SDK still compiles). The web view itself is typed as the local
+`LTWKWebViewLike` protocol (`loadRequest:`, `stopLoading`, `isLoading`, `setCustomUserAgent:`) rather
+than poked with string-key KVC, so a wrong signature fails the build; the poll timer's target is a
+`LTWeakTimerProxy` so it cannot retain the controller, and it is invalidated in `dealloc` too.
+`adoptWKCookies:` keeps the `google`/`youtube` cookies and
+only replaces the stored credentials when SAPISID is among them. **iOS 8-10 keep `UIWebView`**
+(`openUIWebViewInFrame:`), which shares cookies with `NSHTTPCookieStorage`, so `webViewDidFinishLoad:`
+can adopt them via `tryAdoptCookies`. Both routes are offered only when `+webSignInAvailable` is YES
+(64-bit devices, where WebKit survives the page; on 32-bit armv7 it crashes natively mid-render).
+WebKit is never linked: the armv7 SDK has it only as a private framework, so `LTEnsureWebKitLoaded`
+dlopens it on demand on the iOS 11+ path and iOS 6-10 launches never touch it. `viewWillDisappear:`
+and `finishSignIn` stop the cookie poll timer. **Cookie sign-in** — the legacy method and
 the fallback everywhere — is the `Paste` bar button / "Use a cookie instead" button
 (`pasteTapped:` → `alertView:` handling), which builds credentials from a bare SAPISID token or a
 full Cookie header. `finishSignIn` verifies the account via `fetchAccountNameWithCompletion:` and
