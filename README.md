@@ -11,6 +11,35 @@ stream music without needing a modern OS.
 
 
 
+## Android
+
+ReCloud for Android is a native Kotlin and Compose app for Android 8.0 or newer. It plays personal audio and licensed Internet Archive recordings through Android's media session. Public YouTube search, channel and playlist browsing use the YouTube Data API. Supported YouTube videos play in a visible embedded player. A pasted video link can open the player without a search key.
+
+**Install.** Download the `ReCloud-debug` artifact from a successful **Android build** run in GitHub Actions, extract the ZIP, and open `app-debug.apk` on your phone. Allow installation from the app you used to open it if Android prompts. For a local build, use the APK path below. Debug builds signed by different machines or CI runs can have different certificates. Use a consistent signing key to distribute updates that retain library data.
+
+**First listen.** Open **Home** and select an Internet Archive release, or choose **Library → Import audio** and select files. Open a song's **•••** menu to favorite it, add it to a playlist, or download a licensed recording. **Search → YouTube** accepts a video link. To search by title in the app, add your key in **Settings → YouTube Data API key** or connect an authorized Google account.
+
+**Build locally.** Open `android/` in Android Studio Panda 3 Patch 1 or newer, or install JDK 17 and Android SDK command-line tools. Set `ANDROID_HOME` to your SDK, or give Android Studio an SDK path in the untracked `android/local.properties`. Install SDK Platform 37.0, Build Tools 36.0.0 and Platform Tools. Gradle downloads via the checked-in wrapper.
+
+```sh
+cd android
+sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "platform-tools"
+./gradlew testDebugUnitTest lintDebug assembleDebug
+# With an emulator or test phone connected
+./gradlew connectedDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+On Windows PowerShell use `.\gradlew.bat` in place of `./gradlew` and `sdkmanager.bat` if needed. The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+**Configure YouTube.** In Google Cloud enable **YouTube Data API v3**. Restrict the public API key to that API and an Android application with package `org.recloud.music` and your signing certificate's SHA-1. Run the Gradle task `signingReport` to find the debug fingerprint. Set `RECLOUD_YOUTUBE_API_KEY` in the build environment to supply a distributor's restricted public key, or enter a personal key in Settings. A build-time key can be read from an APK. For account playlists, also configure the OAuth consent screen, any required test users, and an **Android OAuth client** for the same package and certificate. Connect through Google Play services on the phone. Access tokens live in memory. The on-device search key is encrypted with Android Keystore. [YouTube API setup](https://developers.google.com/youtube/v3/getting-started) · [Google authorization on Android](https://developers.google.com/identity/authorization/android)
+
+**Google sign-in troubleshooting.** Choose **Connect Google account**, select or add the intended Google account in the system picker, then approve read-only YouTube access. ReCloud confirms the connection after YouTube returns the account playlist list. For a registration error (Google status 10), compare the installed APK certificate against the Android OAuth client in the project with YouTube Data API v3 enabled. During OAuth testing, add the chosen Google address as a consent-screen test user. An API key alone enables public searches. Private playlists require OAuth authorization.
+
+**Sign a release.** In Android Studio open `android/`, choose **Build → Generate Signed App Bundle or APK → APK → app**, and select or create a keystore outside the repository. Choose the release variant and retain the keystore and passwords in your own secure storage for subsequent updates. Register the release certificate for YouTube separately. Use the generated signed release APK for distribution. [Android signing guide](https://developer.android.com/studio/publish/app-signing)
+
+The port includes original ReCloud artwork and controls from [Recilia/ReCloud](https://github.com/Recilia/ReCloud), via [iReaching/ReCloud](https://github.com/iReaching/ReCloud), under the repository's GPL-3.0-or-later terms. See the [port plan](ANDROID_PORT_PLAN.md), [feature parity and verification](android/PARITY.md), [license](LICENSE), and [disclaimer](DISCLAIMER.md).
+
 ## Features
 
 - Search with Songs / Videos / Albums / Artists tabs (cached search history)
