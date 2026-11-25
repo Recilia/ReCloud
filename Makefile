@@ -14,66 +14,17 @@ TARGET_OS_DEPLOYMENT_VERSION_armv7 = 6.0
 include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ReinMusic
-ReinMusic_FILES = main.m \
-	LTLog.m \
-	LTAppDelegate.m \
-	LTModel.m \
-	LTAuth.m \
-	LTYouTubeClient.m \
-	LTSignInViewController.m \
-	LTCookieSignInViewController.m \
-	LTCookieTutorialViewController.m \
-	LTTabBarController.m \
-	LTSplitContainerViewController.m \
-	LTHomeViewController.m \
-	LTSettingsViewController.m \
-	LTGraphics.m \
-	LTHaptics.m \
-	LTAppIcon.m \
-	LTLucideIcons.m \
-	LTSearchViewController.m \
-	LTTrackListViewController.m \
-	LTArtistViewController.m \
-	LTPlayerViewController.m \
-	LTPlayerController.m \
-	LTQueueViewController.m \
-	LTPlaylistStore.m \
-	LTDownloadQueueViewController.m \
-	LTPlaylistPicker.m \
-	LTSongMenu.m \
-	LTSyncServer.m \
-	LTP2PSync.m \
-	LTLocalPlaylistDetailViewController.m \
-	LTMediaCell.m \
-	LTShelfCell.m \
-	LTPersonalShelves.m \
-	LTToast.m \
-	LTTableSongMenu.m \
-	LTTextUtils.m \
-	LTTheme.m \
-	LTSafeArea.m \
-	LTSimpleCell.m \
-	LTHeaderView.m \
-	LTCustomActionSheet.m \
-	LTTransitionSettings.m \
-	LTTransitionSpeedViewController.m \
-	LTRecentsTileSizeViewController.m \
-	LTOneHandedMode.m \
-	LTOneHandedModeViewController.m \
-	LTAppTabBar.m \
-	LTWebExporter.m \
-	LTPlaylistSelectViewController.m \
-	LTLibraryViewController.m \
-	LTLibrarySongsViewController.m \
-	LTSpinnerView.m \
-	LTStatsViewController.m \
-	LTStatsDetailViewController.m \
-	LTDebugMenuViewController.m \
-	LTDebugSettings.m \
-	LTUpdater.m \
-	LTiPodViewController.m
+
+# Sources live under src/<area>/. Find them automatically so adding a file
+# only means dropping it in the right folder.
+SRC_DIRS := $(shell find src -type d)
+ReinMusic_FILES = $(shell find src -name '*.m' | sort)
+
 ReinMusic_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore MediaPlayer
-ReinMusic_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-objc-interface-ivars
+# Every source folder is on the include path, so a file can import a header
+# from another area by name (e.g. #import "LTAuth.h") regardless of location.
+ReinMusic_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-objc-interface-ivars \
+	$(addprefix -I,$(SRC_DIRS))
 ReinMusic_LDFLAGS = -Wl,-U,_memcpy -Wl,-U,_memset -Wl,-U,__Unwind_Resume
 
 include $(THEOS_MAKE_PATH)/application.mk

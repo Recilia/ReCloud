@@ -1,8 +1,10 @@
-# ReinMusic — File Reference
+# Re:Cloud - File Reference
 
-This document describes every file in the ReinMusic repository (v1.0). ReinMusic is an Objective-C
-iOS app built with Theos — a native YouTube Music client for legacy jailbroken iOS 6+ devices
-(armv7) that also runs on modern arm64 hardware. It talks to YouTube's unofficial InnerTube API for
+This document describes the app as it was originally documented for v1.0 (then named ReinMusic).
+The source files now live under `src/<area>/`; the sections below are grouped by class name rather
+than by folder, and the behaviour described still applies unless a section says otherwise. Re:Cloud
+is an Objective-C iOS app built with Theos - a native YouTube Music client for legacy jailbroken
+iOS 6+ devices (armv7) that also runs on modern arm64 hardware. It talks to YouTube's unofficial InnerTube API for
 search, browsing, streaming and lyrics, and adds local playlists, offline downloads, listening
 stats, account sign-in, peer-to-peer library sync, a web export feature, and even a full
 iPod-classic emulator mode. Below, each file is listed with its purpose and a summary of the code it
