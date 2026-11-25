@@ -580,7 +580,7 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
         case LTSettingsSectionAppearance: return [self appearanceRowCount];
         case LTSettingsSectionData: return 9;
         case LTSettingsSectionAbout: return 2;
-        case LTSettingsSectionCredits: return 4;
+        case LTSettingsSectionCredits: return 5;
         case LTSettingsSectionBranding: return 2;
         default: return 0;
     }
@@ -781,10 +781,11 @@ typedef NS_ENUM(NSInteger, LTSettingsSection) {
             static dispatch_once_t once;
             dispatch_once(&once, ^{
                 names = @[ @"Rein",
+                           @"iReaching",
                            @"Discord: @ncros",
                            @"Github: @Recilia",
                            @"Email: ncros@duck.com" ];
-                roles = @[ @"Developer", @"", @"", @"" ];
+                roles = @[ @"Developer", @"Developer", @"", @"", @"" ];
             });
             cell.textLabel.text = [names objectAtIndex:(NSUInteger)indexPath.row];
             cell.detailTextLabel.text = [roles objectAtIndex:(NSUInteger)indexPath.row];

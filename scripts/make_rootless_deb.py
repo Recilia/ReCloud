@@ -15,7 +15,7 @@ The .deb is assembled with Theos' own dm.pl so the output matches what
 `make package` produces for the rootful build.
 
 Usage:
-    ./make_rootless_deb.py [input.ipa] -v VERSION [-o output.deb]
+    ./scripts/make_rootless_deb.py [input.ipa] -v VERSION [-o output.deb]
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent
 
 TOOLCHAIN = Path(os.environ.get("THEOS", "/opt/theos")) / "toolchain" / "linux" / "iphone" / "bin"
 LDID = TOOLCHAIN / "ldid"
@@ -67,7 +68,7 @@ def run(cmd: list) -> None:
 
 
 def default_ipa() -> Path:
-    ipas = [p for p in (HERE).glob("ReinMusic-*.ipa") if not p.name.endswith("-legacy.ipa")]
+    ipas = [p for p in ROOT.glob("ReinMusic-*.ipa") if not p.name.endswith("-legacy.ipa")]
     if not ipas:
         raise SystemExit("No modern .ipa found; run make_modern_ipa.py first.")
     return max(ipas, key=lambda p: p.stat().st_mtime)
@@ -179,7 +180,7 @@ def main() -> None:
 
     ipa = Path(args.ipa) if args.ipa else default_ipa()
     out = Path(args.output) if args.output else (
-        HERE / "packages" / f"{PACKAGE}_{args.version}_iphoneos-arm64.deb"
+        ROOT / "packages" / f"{PACKAGE}_{args.version}_iphoneos-arm64.deb"
     )
     build_rootless_deb(ipa, out, args.version)
     print(f"\nDone: {out}")

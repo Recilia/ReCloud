@@ -18,9 +18,9 @@ folder (outside the repo) so the files you hand out are always the newest
 build. Set REIN_DOWNLOADS_DIR to send them somewhere else.
 
 Usage:
-    ./make_release.py                 # make package, then build everything
-    ./make_release.py --no-build      # reuse the newest existing rootful .deb
-    ./make_release.py --deb path.deb  # use a specific rootful .deb
+    ./scripts/make_release.py                 # make package, then build everything
+    ./scripts/make_release.py --no-build      # reuse the newest existing rootful .deb
+    ./scripts/make_release.py --deb path.deb  # use a specific rootful .deb
 """
 
 from __future__ import annotations
@@ -32,8 +32,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(SCRIPT_DIR))
 
 import make_legacy_ipa  # noqa: E402
 import make_modern_ipa  # noqa: E402
@@ -52,14 +53,14 @@ def downloads_dir() -> Path:
     override = os.environ.get("REIN_DOWNLOADS_DIR")
     if override:
         return Path(override).expanduser()
-    if HERE.parent.name.lower() == "downloads":
-        return HERE.parent
+    if ROOT.parent.name.lower() == "downloads":
+        return ROOT.parent
     return Path.home() / "Downloads"
 
 
 def newest_rootful_deb() -> Path:
     debs = sorted(
-        (HERE / "packages").glob(f"{PACKAGE}_*_iphoneos-arm.deb"),
+        (ROOT / "packages").glob(f"{PACKAGE}_*_iphoneos-arm.deb"),
         key=lambda p: p.stat().st_mtime,
     )
     if not debs:
@@ -77,7 +78,7 @@ def run_make_package() -> None:
     env["THEOS"] = str(THEOS)
     env["PATH"] = f"{THEOS}/bin:" + env.get("PATH", "")
     print(f"==> make package ({THEOS})")
-    subprocess.run(["make", "package"], cwd=str(HERE), env=env, check=True)
+    subprocess.run(["make", "package"], cwd=str(ROOT), env=env, check=True)
 
 
 def archive(version: str, built: list) -> Path:
@@ -86,7 +87,7 @@ def archive(version: str, built: list) -> Path:
     Each artifact is renamed to make its role obvious: .debs become
     -rootful/-rootless and .ipas become -64/-32 (the architecture width).
     """
-    dest = HERE / "versions" / version
+    dest = ROOT / "versions" / version
     dest.mkdir(parents=True, exist_ok=True)
     for _, path, _, archive_name in built:
         shutil.copy2(path, dest / archive_name)
@@ -124,9 +125,9 @@ def main() -> None:
 
     version = version_of(rootful)
     short = version.split("+", 1)[0]
-    modern = HERE / f"ReinMusic-{short}.ipa"
-    legacy = HERE / f"ReinMusic-{short}-legacy.ipa"
-    rootless = HERE / "packages" / f"{make_rootless_deb.PACKAGE}_{version}_iphoneos-arm64.deb"
+    modern = ROOT / f"ReinMusic-{short}.ipa"
+    legacy = ROOT / f"ReinMusic-{short}-legacy.ipa"
+    rootless = ROOT / "packages" / f"{make_rootless_deb.PACKAGE}_{version}_iphoneos-arm64.deb"
 
     print(f"\n==> Release {version}\n")
 

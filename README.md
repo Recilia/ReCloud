@@ -53,9 +53,9 @@ To build and install directly to a device over SSH:
 THEOS=/path/to/theos THEOS_DEVICE_IP=<ip> make package install
 ```
 
-`./make_release.py` builds all four distributables (rootful and rootless `.deb`, plus the 64-bit
-and 32-bit `.ipa`) and copies them into `versions/<version>/` in the repo and into your Downloads
-folder.
+`./scripts/make_release.py` builds all four distributables (rootful and rootless `.deb`, plus the
+64-bit and 32-bit `.ipa`) and copies them into `versions/<version>/` in the repo and into your
+Downloads folder.
 
 ## Signing in
 
@@ -84,7 +84,7 @@ versions differ, the sync is refused.
   Size, theme
 - **Data management** - Offline Downloads, Sync with Another Phone, Refresh Metadata & Artwork,
   Create Rein Mini Instance, Clear Offline Downloads
-- **Credits / Branding** - project credits, Exelorent and Discord `@s.tyx`
+- **Credits / Branding** - project credits (Rein, iReaching), Exelorent and Discord `@s.tyx`
 
 ## Project layout
 
@@ -102,10 +102,18 @@ src/
 Resources/    bundled assets: icons, launch images, Info.plist, font
 layout/       deb package layout and maintainer scripts
 ipa_extras/   extra files injected into the modern IPA
+scripts/      Python packaging and deb-to-ipa tools
 docs/         file reference, disclaimer and legacy assets
 ```
 
-The root keeps `Makefile`, `control`, `README.md`, `LICENSE` and the Python packaging scripts.
+The root keeps `Makefile`, `control`, `README.md` and `LICENSE`.
+
+## Credits
+
+- **Rein** - developer
+- **iReaching** - developer
+- **Exelorent** - branding
+- **Discord `@s.tyx`** - branding
 
 ## License
 

@@ -15,7 +15,7 @@ jailbroken devices via ipainstaller/AppSync, while sideloading tools are free
 to re-sign it.
 
 Usage:
-    ./make_legacy_ipa.py [input.deb] [-o output.ipa]
+    ./scripts/make_legacy_ipa.py [input.deb] [-o output.ipa]
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(SCRIPT_DIR))
 import deb_to_ipa  # noqa: E402
 
 TOOLCHAIN = Path(os.environ.get("THEOS", "/opt/theos")) / "toolchain" / "linux" / "iphone" / "bin"
@@ -49,7 +50,7 @@ def run(cmd: list) -> None:
 
 
 def default_deb() -> Path:
-    pkgs = sorted((HERE / "packages").glob("*.deb"), key=lambda p: p.stat().st_mtime)
+    pkgs = sorted((ROOT / "packages").glob("*.deb"), key=lambda p: p.stat().st_mtime)
     if not pkgs:
         raise SystemExit("No .deb found in packages/; run `make package` first.")
     return pkgs[-1]
@@ -126,7 +127,7 @@ def main() -> None:
     args = parser.parse_args()
 
     deb = Path(args.deb) if args.deb else default_deb()
-    out = Path(args.output) if args.output else HERE / legacy_ipa_name(deb)
+    out = Path(args.output) if args.output else ROOT / legacy_ipa_name(deb)
     build_legacy_ipa(deb, out)
     print(f"\nDone: {out}")
 
