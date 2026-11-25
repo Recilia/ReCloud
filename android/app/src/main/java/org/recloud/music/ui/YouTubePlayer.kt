@@ -150,7 +150,7 @@ internal fun YouTubePlayer(
                     val data = JSONArray(value)
                     playOrderIndex = data.optInt(3, -1)
                     data.optJSONArray(4)?.let { ids ->
-                        playbackOrder = List(ids.length()) { ids.optString(index) }
+                        playbackOrder = List(ids.length()) { index -> ids.optString(index) }
                     }
                     transport = TransportState(data.optInt(0), data.optLong(1), data.optLong(2))
                 }
@@ -223,7 +223,7 @@ internal fun YouTubePlayer(
                 command("player.nextVideo()")
             }
             Transport (
-                R.drawable.loop,
+                R.drawable.repeat,
                 if (transport?.state == 5) "Turn loop off" else "Turn loop on",
                 transport?.state == 5,
                 ready && queue.size > 1 && playOrderIndex >= 0,
