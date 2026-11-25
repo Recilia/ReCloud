@@ -108,6 +108,7 @@ class Collection(private val app: Context, val db: Library) : PlaybackProvider {
                     dao.put(song)
                     dao.put(LocalSource(id, uri.toString()))
                 }
+                song
             } finally {
                 meta.release()
             }

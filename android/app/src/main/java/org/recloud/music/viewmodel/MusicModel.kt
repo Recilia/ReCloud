@@ -38,8 +38,14 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
     private fun searchKey() =
         apiKey.read().ifBlank { org.recloud.music.BuildConfig.YOUTUBE_API_KEY }
 
-    suspend fun playlistVideos(id: String) =
-        youtube.list("", "video", VideoEntry(id, "playlist", ""), searchKey(), token)
+    internal fun playlistReader(id: String) = account.reader(id, token)
+
+    var accountSession by mutableStateOf("")
+        private set
+    var playlistsLoading by mutableStateOf(false)
+        private set
+    var playlistsError by mutableStateOf("")
+        private set
 
     var playlists by mutableStateOf(emptyList<YouTubeLink>())
         private set
@@ -253,9 +259,15 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
 
     fun access(value: String) {
         accountJob?.cancel()
+        if (token != value) {
+            clearAccountQueue()
+            accountSession = java.util.UUID.randomUUID().toString()
+            playlists = emptyList()
+        }
         token = value
         signedIn = true
-        playlists = emptyList()
+        playlistsLoading = true
+        playlistsError = ""
         accountJob = task {
             try {
                 playlists = account.playlists(value)
@@ -263,7 +275,10 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (e is ServiceFailure && e.status == 401 && "youtubeSignupRequired" !in e.reasons) signOut()
-                notice(playlistFailureMessage(e))
+                playlistsError = playlistFailureMessage(e)
+                notice(playlistsError)
+            } finally {
+                if (currentCoroutineContext().isActive) playlistsLoading = false
             }
         }
     }
@@ -271,6 +286,7 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
     fun refreshAccountPlaylists() { if (token.isNotEmpty()) access(token) }
 
     fun signOut() {
+        clearAccountQueue()
         if (token.isNotBlank())
             com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(app)
                 .clearToken(
@@ -281,35 +297,54 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
         accountJob?.cancel()
         searching?.cancel()
         token = ""
+        accountSession = ""
+        playlistsLoading = false
+        playlistsError = ""
         signedIn = false
         playlists = emptyList()
         videos = emptyList()
         busy = false
     }
 
-    var videoQueue by mutableStateOf(emptyList<String>())
+    var videoQueue by mutableStateOf(emptyList<VideoEntry>())
         private set
 
     var showVideo by mutableIntStateOf(0)
         private set
 
-    fun openVideo(entry: VideoEntry, following: List<String> = emptyList()) {
-        videoQueue = following.take(50)
+    fun openVideo(entry: VideoEntry) = openVideoQueue(listOf(entry))
+
+    private var accountQueue = false
+
+    private fun clearAccountQueue() {
+        if (accountQueue) {
+            video = null
+            videoQueue = emptyList()
+            accountQueue = false
+        }
+    }
+
+    fun openVideoQueue(entries: List<VideoEntry>, fromAccount: Boolean = false) {
+        val first = entries.firstOrNull() ?: return
+        accountQueue = fromAccount
+        videoQueue = entries
         showVideo++
         controller?.pause()
-        video = entry
+        video = first
     }
 
     fun play(list: List<Song>, at: Int = 0, shuffle: Boolean = false, append: Boolean = false) {
         if (list.isEmpty()) return
-        val selected = list[if (shuffle) list.indices.random() else at.coerceIn(list.indices)]
+        val index = if (shuffle) list.indices.random() else at.coerceIn(list.indices)
+        val selected = list[index]
         val youtubeId = selected.youtubeId
         if (youtubeId != null) {
-            val videos = list.mapNotNull { it.youtubeId }
-            val others =
-                if (shuffle) (videos - youtubeId).shuffled()
-                else videos.drop(videos.indexOf(youtubeId) + 1)
-            openVideo(VideoEntry(youtubeId, "video", selected.title, selected.artist), others)
+            val ordered = if (shuffle) {
+                listOf(selected) + list.filterIndexed { i, _ -> i != index }.shuffled()
+            } else list.drop(index)
+            openVideoQueue(ordered.mapNotNull { song ->
+                song.youtubeId?.let { VideoEntry(it, "video", song.title, song.artist) }
+            })
             if (list.any { it.youtubeId == null })
                 notice("Playing the YouTube entries in this list.")
             return
@@ -344,20 +379,29 @@ class MusicModel(application: Application) : AndroidViewModel(application), Play
         }
     }
 
-    fun import(uris: List<Uri>) = task {
-        var success = 0
+    private suspend fun importAudioFiles(uris: List<Uri>): List<Song> {
+        val songs = mutableListOf<Song>()
         for (uri in uris) {
             try {
-                app.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-                store.import(uri)
-                success++
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                songs += store.import(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Other selected documents may still be available.
             }
         }
+        return songs
+    }
+
+    fun playAudioFiles(uris: List<Uri>) = task {
+        val songs = importAudioFiles(uris)
+        if (songs.isNotEmpty()) play(songs)
+        if (songs.size < uris.size) notice("Could read ${songs.size} of ${uris.size} audio files.")
+    }
+
+    fun import(uris: List<Uri>) = task {
+        val success = importAudioFiles(uris).size
         notice("Imported $success of ${uris.size} audio files")
     }
 

@@ -135,9 +135,13 @@ fun ReCloudScreen(vm: MusicModel) {
                         "Home",
                         "Search" ->
                             if (vm.album != null) Album(vm)
-                            else if (dest == "Home") Home(vm, opts) { go("Player") }
+                            else if (dest == "Home") AccountPlaylistDestination(vm, "Home") { select ->
+                                Home(vm, opts, select)
+                            }
                             else Search(vm) { go("Player") }
-                        "Library" -> LibraryScreen(vm)
+                        "Library" -> AccountPlaylistDestination(vm, "Library") { select ->
+                            LibraryScreen(vm, select)
+                        }
                         "Player" -> PlayerScreen(vm, opts)
                         else -> Settings(vm, opts)
                     }
@@ -148,42 +152,7 @@ fun ReCloudScreen(vm: MusicModel) {
 }
 
 @Composable
-fun Home(vm: MusicModel, opts: Map<String, String>, player: () -> Unit) {
-    var accountList by rememberSaveable { mutableStateOf("") }
-    var accountTitle by rememberSaveable { mutableStateOf("") }
-    if (accountList.isNotEmpty() && vm.signedIn) {
-        BackHandler { accountList = "" }
-        var entries by remember(accountList) { mutableStateOf(emptyList<VideoEntry>()) }
-        var status by remember(accountList) { mutableStateOf("Loading playlist…") }
-        LaunchedEffect(accountList) {
-            try {
-                entries = vm.playlistVideos(accountList)
-                status = if (entries.isEmpty()) "This playlist has no available videos." else ""
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                status = e.message ?: "Could not load playlist."
-            }
-        }
-        LazyColumn(contentPadding = PaddingValues(16.dp)) {
-            item {
-                TextButton({ accountList = "" }) { Text("‹ Home") }
-                Heading(accountTitle)
-                if (status.isNotBlank()) Text(status)
-            }
-            items(entries) { entry ->
-                SongRow(
-                    Song("yt-" + entry.id, entry.title, entry.artist),
-                    vm,
-                    {
-                        vm.openVideo(entry)
-                        player()
-                    },
-                )
-            }
-        }
-        return
-    }
+fun Home(vm: MusicModel, opts: Map<String, String>, selectPlaylist: (String) -> Unit) {
     val songs by remember { vm.dao.songs() }.collectAsStateWithLifecycle(emptyList())
     val stats by remember { vm.dao.stats() }.collectAsStateWithLifecycle(emptyList())
     val recent =
@@ -243,13 +212,7 @@ fun Home(vm: MusicModel, opts: Map<String, String>, player: () -> Unit) {
                 Text(vm.homeError)
                 TextButton(vm::refreshHome) { Text("Retry") }
             }
-        if (vm.playlists.isNotEmpty()) item { Heading("Your YouTube playlists") }
-        items(vm.playlists) { link ->
-            Entry(link.title) {
-                accountTitle = link.title
-                accountList = link.url.substringAfter("list=")
-            }
-        }
+        accountPlaylistRows(vm, selectPlaylist)
         if (recent.isEmpty())
             item {
                 Heading("Your music")

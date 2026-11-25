@@ -12,8 +12,40 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.recloud.music.network.field
 import org.recloud.music.network.json
+import org.recloud.music.network.VideoEntry
+import org.recloud.music.network.YouTubeCatalog
 
-data class YouTubeLink(val title: String, val url: String)
+data class YouTubeLink(val title: String, val id: String)
+
+internal data class PlaylistPage(val items: List<Pair<String, VideoEntry>>, val next: String?)
+
+internal class AccountPlaylistReader(private val fetch: suspend (String) -> PlaylistPage) {
+    private val itemIds = mutableSetOf<String>()
+    private val visited = mutableSetOf<String>()
+    private val loaded = mutableListOf<VideoEntry>()
+    val entries: List<VideoEntry> get() = loaded
+    var next: String? = ""
+        private set
+
+    suspend fun loadNext() {
+        val cursor = next ?: return
+        val page = fetch(cursor)
+        check(page.next == null || (page.next != cursor && page.next !in visited)) {
+            "YouTube returned a repeated playlist page."
+        }
+        visited += cursor
+        for ((itemId, video) in page.items) {
+            // A playlist can contain the same video at two distinct positions.
+            if (itemIds.add(itemId)) loaded += video
+        }
+        next = page.next
+    }
+
+    suspend fun queue(start: Int, shuffle: Boolean): List<VideoEntry> {
+        while (next != null) loadNext()
+        return if (shuffle) entries.shuffled() else entries.drop(start)
+    }
+}
 
 interface AccountProvider {
     suspend fun playlists(token: String): List<YouTubeLink>
@@ -92,12 +124,30 @@ class YouTubeAccount(private val client: OkHttpClient) : AccountProvider {
                 result +=
                     YouTubeLink(
                         item.getValue("snippet").jsonObject.field("title"),
-                        "https://www.youtube.com/playlist?list=" + item.field("id"),
+                        item.field("id"),
                     )
             }
             page = root.field("nextPageToken")
         } while (page.isNotEmpty() && result.size < 1000)
         return result
+    }
+
+    internal fun reader(id: String, token: String) = AccountPlaylistReader { cursor ->
+        val url = "https://www.googleapis.com/youtube/v3/playlistItems".toHttpUrl().newBuilder()
+            .addQueryParameter("part", "snippet")
+            .addQueryParameter("playlistId", id)
+            .addQueryParameter("maxResults", "50")
+            .apply { if (cursor.isNotEmpty()) addQueryParameter("pageToken", cursor) }
+            .build()
+        val root = client.json(Request.Builder().url(url)
+            .header("Authorization", "Bearer $token")
+            .header("Cache-Control", "no-store").build())
+        val items = root.getValue("items").jsonArray.mapNotNull { item ->
+            val video = YouTubeCatalog.parseItem(item, playlist = true) ?: return@mapNotNull null
+            val itemId = item.jsonObject.field("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            itemId to video
+        }
+        PlaylistPage(items, root.field("nextPageToken").ifBlank { null })
     }
 }
 

@@ -70,13 +70,13 @@ fun Cover(url: String?, modifier: Modifier) {
 }
 
 @Composable
-fun Transport(icon: Int, label: String, selected: Boolean = false, click: () -> Unit) {
-    IconButton(onClick = click) {
+fun Transport(icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true, click: () -> Unit) {
+    IconButton(onClick = click, enabled = enabled) {
         Icon(
             painterResource(icon),
             label,
             Modifier.size(26.dp),
-            tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+            tint = if (selected && enabled) MaterialTheme.colorScheme.primary else LocalContentColor.current,
         )
     }
 }

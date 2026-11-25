@@ -42,7 +42,7 @@ class YouTubeCatalog(private val app: Context, private val client: OkHttpClient)
     }
 
     fun signingFingerprint() = certificate.chunked(2).joinToString(":")
-    
+
     suspend fun linkedVideo(id: String): VideoEntry {
         val url =
             "https://www.youtube.com/oembed"
@@ -101,22 +101,35 @@ class YouTubeCatalog(private val app: Context, private val client: OkHttpClient)
 
     companion object {
         fun parse(root: JsonObject, playlist: Boolean): List<VideoEntry> =
-            root.getValue("items").jsonArray.mapNotNull {
-                val obj = it as? JsonObject ?: return@mapNotNull null
-                val snippet = obj["snippet"] as? JsonObject ?: return@mapNotNull null
-                val id =
-                    (if (playlist) snippet["resourceId"] else obj["id"]) as? JsonObject
-                        ?: return@mapNotNull null
-                val type =
-                    listOf("video", "playlist", "channel").firstOrNull { k ->
-                        id.field(k + "Id").isNotEmpty()
-                    } ?: return@mapNotNull null
-                VideoEntry(
-                    id.field(type + "Id"),
-                    type,
-                    snippet.field("title"),
-                    snippet.field("channelTitle"),
-                )
-            }
+            root.getValue("items").jsonArray.mapNotNull { parseItem(it, playlist) }
+
+        internal fun parseItem(item: JsonElement, playlist: Boolean): VideoEntry? {
+            val obj = item as? JsonObject ?: return null
+            val snippet = obj["snippet"] as? JsonObject ?: return null
+            val id =
+                (if (playlist) snippet["resourceId"] else obj["id"]) as? JsonObject ?: return null
+            val type =
+                listOf("video", "playlist", "channel").firstOrNull { k ->
+                    id.field(k + "Id").isNotEmpty()
+                } ?: return null
+            val title = snippet.field("title")
+            if (
+                playlist &&
+                    (type != "video" || !id.field("videoId").matches(Regex("[A-Za-z0-9_-]{11}")))
+            )
+                return null
+            if (
+                playlist &&
+                    title in setOf("Deleted video", "Private video") &&
+                    snippet.field("videoOwnerChannelId").isBlank()
+            )
+                return null
+            return VideoEntry(
+                id.field(type + "Id"),
+                type,
+                title,
+                snippet.field("videoOwnerChannelTitle").ifBlank { snippet.field("channelTitle") },
+            )
+        }
     }
 }

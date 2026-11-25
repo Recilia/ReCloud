@@ -15,7 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.recloud.music.viewmodel.MusicModel
 
 @Composable
-fun LibraryScreen(vm: MusicModel) {
+fun LibraryScreen(vm: MusicModel, selectPlaylist: (String) -> Unit) {
     val songs by remember { vm.dao.songs() }.collectAsStateWithLifecycle(emptyList())
     val mixes by remember { vm.dao.mixes() }.collectAsStateWithLifecycle(emptyList())
     val stars by remember { vm.dao.stars() }.collectAsStateWithLifecycle(emptyList())
@@ -92,6 +92,7 @@ fun LibraryScreen(vm: MusicModel) {
             if (mixes.isEmpty())
                 item { Text("Create a playlist, then add tracks from their song menus.") }
             items(mixes) { p -> Entry(p.name, "${p.ids().size} tracks") { selected = p.id } }
+            accountPlaylistRows(vm, selectPlaylist)
         } else if (section == "Stats" && mix == null) {
             item {
                 Heading("Listening time")

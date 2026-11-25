@@ -1,7 +1,7 @@
 package org.recloud.music.ui
 
-import android.annotation.SuppressLint
-import android.webkit.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -17,9 +17,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.*
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
@@ -64,66 +61,27 @@ fun MiniPlayer(vm: MusicModel, expand: () -> Unit) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun YouTubePlayer(id: String, queue: List<String>) {
-    val open = openLink()
-    val ctx = LocalContext.current
-    val owner = LocalLifecycleOwner.current
-    val lifecycle by
-        owner.lifecycle.currentStateFlow.collectAsStateWithLifecycle(
-            minActiveState = Lifecycle.State.CREATED
-        )
-    if (lifecycle.isAtLeast(Lifecycle.State.RESUMED) && id.matches(Regex("[A-Za-z0-9_-]{11}")))
-        key(id, queue) {
-            AndroidView(
-                factory = { context ->
-                    WebView(context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        settings.mediaPlaybackRequiresUserGesture = true
-                        webChromeClient = WebChromeClient()
-                        webViewClient =
-                            object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView,
-                                    request: WebResourceRequest,
-                                ): Boolean {
-                                    if (!request.isForMainFrame) return false
-                                    if (request.url.scheme == "https") open(request.url.toString())
-                                    return true
-                                }
-                            }
-                        loadUrl(
-                            "https://www.youtube.com/embed/$id?playsinline=1" +
-                                if (queue.isEmpty()) "" else "&playlist=" + queue.joinToString(","),
-                            mapOf("Referer" to "https://${ctx.packageName}/"),
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 210.dp).aspectRatio(16f / 9f),
-                onRelease = {
-                    it.stopLoading()
-                    it.destroy()
-                },
-            )
-        }
-}
-
 @Composable
 fun PlayerScreen(vm: MusicModel, opts: Map<String, String>) {
     vm.revision
     val video = vm.video
     if (video != null) {
         val open = openLink()
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) vm.playAudioFiles(uris)
+        }
+        var position by rememberSaveable(vm.showVideo) { mutableIntStateOf(0) }
+        val current = vm.videoQueue.getOrNull(position) ?: video
         Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
             Heading("Now playing")
-            YouTubePlayer(video.id, vm.videoQueue)
-            Heading(video.title)
-            Text(video.artist)
-            TextButton({ open("https://www.youtube.com/watch?v=" + video.id) }) {
+            key(vm.showVideo) {
+                YouTubePlayer(vm.videoQueue, position, { position = it }) {
+                    Heading(current.title)
+                    Text(current.artist)
+                }
+            }
+            OutlinedButton({ picker.launch(arrayOf("audio/*")) }) { Text("Play audio files…") }
+            TextButton({ open("https://www.youtube.com/watch?v=" + current.id) }) {
                 Text("Open in YouTube")
             }
             TextButton({ vm.video = null }) { Text("Return to audio queue") }
@@ -246,7 +204,7 @@ fun PlayerScreen(vm: MusicModel, opts: Map<String, String>) {
                         if (playing) R.drawable.pause else R.drawable.play,
                         if (playing) "Pause" else "Play",
                         true,
-                        vm::toggle,
+                        click = vm::toggle,
                     )
                     Transport(R.drawable.next, "Next") { p.seekToNextMediaItem() }
                     Transport(
